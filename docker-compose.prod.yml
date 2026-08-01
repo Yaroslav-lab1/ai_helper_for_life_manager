@@ -1,0 +1,49 @@
+services:
+  backend:
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-axel}:${POSTGRES_PASSWORD:?Set a unique POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-axel}
+      SECRET_KEY: ${SECRET_KEY:?Set a unique SECRET_KEY in .env}
+      ENVIRONMENT: production
+      DOMAIN: ${DOMAIN:?Set the production DOMAIN in .env}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:?Set TRUSTED_HOSTS to the production domain}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set the production HTTPS CORS_ORIGINS}
+      ENABLE_DEMO_SEED: "false"
+      USE_SECURE_AUTH_COOKIES: "true"
+      REFRESH_COOKIE_SAMESITE: ${REFRESH_COOKIE_SAMESITE:-lax}
+      EMAIL_BACKEND: smtp
+      SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST for production email}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      EMAIL_FROM: ${EMAIL_FROM:?Set EMAIL_FROM for production email}
+    ports: !reset []
+
+  frontend:
+    build:
+      args:
+        VITE_API_URL: /api/v1
+        VITE_ENABLE_DEMO_LOGIN: "false"
+        VITE_DEMO_PASSWORD: ""
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.10-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?Set the production DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

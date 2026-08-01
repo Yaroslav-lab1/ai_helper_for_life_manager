@@ -1,0 +1,22 @@
+services:
+  backend:
+    environment:
+      ENVIRONMENT: development
+      DOMAIN: ""
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      EMAIL_BACKEND: console
+      ENABLE_DEMO_SEED: ${ENABLE_DEMO_SEED:-false}
+      USE_SECURE_AUTH_COOKIES: "false"
+      DEMO_EMAIL: ${DEMO_EMAIL:-demo@axel.one}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      args:
+        VITE_ENABLE_DEMO_LOGIN: ${VITE_ENABLE_DEMO_LOGIN:-false}
+        VITE_DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+    ports:
+      - "3000:80"

@@ -1,0 +1,82 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-axel}
+      POSTGRES_USER: ${POSTGRES_USER:-axel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-development-only-db-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/sync-postgres-password.sql:/opt/axel/sync-postgres-password.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-axel} -d ${POSTGRES_DB:-axel}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-axel}:${POSTGRES_PASSWORD:-development-only-db-password}@db:5432/${POSTGRES_DB:-axel}
+      SECRET_KEY: ${SECRET_KEY:-development-only-secret-key-not-for-production}
+      ENVIRONMENT: development
+      DOMAIN: ""
+      TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+      TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      ENABLE_DEMO_SEED: ${ENABLE_DEMO_SEED:-false}
+      DEMO_EMAIL: ${DEMO_EMAIL:-demo@axel.one}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+      USE_SECURE_AUTH_COOKIES: "false"
+      REFRESH_COOKIE_SAMESITE: lax
+      EMAIL_BACKEND: console
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-qwen3.5:9b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_REQUEST_TIMEOUT_SECONDS: ${OLLAMA_REQUEST_TIMEOUT_SECONDS:-120}
+      GIGACHAT_AUTHORIZATION_KEY: ${GIGACHAT_AUTHORIZATION_KEY:-}
+      GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
+      GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-https://api.giga.chat/v1}
+      GIGACHAT_OAUTH_URL: ${GIGACHAT_OAUTH_URL:-https://ngw.devices.sberbank.ru:9443/api/v2/oauth}
+      GIGACHAT_REQUEST_TIMEOUT_SECONDS: ${GIGACHAT_REQUEST_TIMEOUT_SECONDS:-120}
+      GIGACHAT_VERIFY_SSL: ${GIGACHAT_VERIFY_SSL:-true}
+      GIGACHAT_CA_BUNDLE_FILE: ${GIGACHAT_CA_BUNDLE_FILE:-/app/backend/certs/russian_trusted_root_ca.pem}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_URL: /api/v1
+        VITE_ENABLE_DEMO_LOGIN: ${VITE_ENABLE_DEMO_LOGIN:-false}
+        VITE_DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
