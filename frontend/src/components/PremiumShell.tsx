@@ -1,12 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
 import {
-  Activity, ArrowUp, BarChart3, Bell, CalendarDays, CheckSquare2, ChevronLeft,
-  ChevronRight, CircleDot, Diamond, Goal, HeartPulse, LayoutDashboard, LogOut,
-  Menu, Moon, Send, Sparkles, Target, X, Zap,
+  Activity, BarChart3, Bell, CalendarDays, ChevronLeft, CircleDot, Diamond,
+  Goal, HeartPulse, LayoutDashboard, LogOut, Menu, Sparkles, Target, X, Zap,
 } from 'lucide-react'
 import type { Page } from '../App'
-import { api, streamChat } from '../lib/api'
-import type { CalendarView, ChatMessage as ChatMessageType, Dashboard, EnergyForecast, EnergyPoint, EnergyRecommendation, EventItem, Recommendation, User } from '../types'
+import type { CalendarView, EventItem, User } from '../types'
 import { ChatPanel } from './ChatPanel'
 
 export function Logo({onClick}:{onClick?:()=>void}) {
@@ -66,60 +63,12 @@ export function Sidebar({page,user,open,navigate,onClose,onLogout,onAssistant}:{
   return <aside className={`sidebar premium-sidebar ${open?'open':''}`}>
     <div className="sidebar-mobile-head"><Logo onClick={()=>navigate('dashboard')}/><button className="icon-btn" onClick={onClose}><X/></button></div>
     <nav>{group('Обзор',overview)}{group('Аналитика',analytics)}{group('Система',system)}</nav>
-    <button className="assistant-status" onClick={onAssistant}><i/><div><b>AI-Ассистент</b><span>Открыть локальный AI-чат</span></div></button>
+    <button className="assistant-status" onClick={onAssistant}><i/><div><b>AI-Ассистент</b><span>Открыть AI-чат</span></div></button>
     <div className="sidebar-account">
       <span className="avatar" style={{background:user.avatar_color}}>{user.name.slice(0,1)}</span>
       <div><b>{user.name}</b><small>{user.occupation||user.email}</small></div>
       <button className="icon-btn" onClick={onLogout} aria-label="Выйти"><LogOut/></button>
     </div>
-  </aside>
-}
-
-export function ChatMessage({message}:{message:ChatMessageType}) {
-  return <div className={`premium-message ${message.role}`}><div>{message.content||<span className="typing"><b/><b/><b/></span>}</div></div>
-}
-
-function LegacyAIAssistantPanel({open,onClose}:{open:boolean;onClose:()=>void}) {
-  const [dashboard,setDashboard]=useState<Dashboard|null>(null)
-  const [recommendations,setRecommendations]=useState<Recommendation[]>([])
-  const [messages,setMessages]=useState<ChatMessageType[]>([])
-  const [text,setText]=useState('')
-  const [sending,setSending]=useState(false)
-  const endRef=useRef<HTMLDivElement>(null)
-  useEffect(()=>{void Promise.all([
-    api<Dashboard>('/dashboard').then(setDashboard),
-    api<Recommendation[]>('/recommendations').then(setRecommendations),
-    api<ChatMessageType[]>('/chat/history').then(setMessages),
-  ]).catch(()=>undefined)},[])
-  const send=async(value=text)=>{
-    const message=value.trim();if(!message||sending)return
-    setText('');setSending(true);setMessages(prev=>[...prev,{role:'user',content:message},{role:'assistant',content:''}]);setTimeout(()=>endRef.current?.scrollIntoView({behavior:'smooth'}),0)
-    try{await streamChat(message,chunk=>setMessages(prev=>{const next=[...prev];next[next.length-1]={...next[next.length-1],content:next[next.length-1].content+chunk};return next}))}
-    catch(err){setMessages(prev=>{const next=[...prev];next[next.length-1]={role:'assistant',content:err instanceof Error?err.message:'Не удалось ответить'};return next})}
-    finally{setSending(false)}
-  }
-  const currentRecommendation=recommendations.find(item=>item.status==='new')
-  return <aside className={`ai-panel ${open?'open':''}`}>
-    <div className="ai-panel-head"><span className="ai-sign"><Diamond/></span><div><b>AI-Ассистент</b><small><i/> Онлайн</small></div><button className="icon-btn close-ai" onClick={onClose}><X/></button></div>
-    <div className="ai-scroll">
-      <section className="ai-summary-card">
-        <h3>Ваш день — в одном взгляде</h3>
-        <p>{dashboard?.overload.level==='high'?'Нагрузка выше обычной. Оставьте буфер между важными делами.':'Темп выглядит устойчиво — есть пространство для главного.'}</p>
-        <div className="signal-list">
-          <span><i>▥</i> Индекс фокуса <b className="positive">{dashboard?.focus_score??'—'}%</b></span>
-          <span><i>◎</i> Выполнено задач <b className="positive">{dashboard?.completed_today??'—'}</b></span>
-          <span><i>◫</i> Событий сегодня <b>{dashboard?.events_today.length??'—'}</b></span>
-          <span><i>⚡</i> Нагрузка <b className={dashboard?.overload.level==='high'?'negative':'positive'}>{dashboard?.overload.score??'—'}</b></span>
-          <span><i>◌</i> Ритм привычек <b className="positive">{dashboard?`${Math.round(dashboard.habit_rate)}%`:'—'}</b></span>
-        </div>
-        {currentRecommendation&&<div className="ai-recommendation"><b>Рекомендация</b><p>{currentRecommendation.body}</p></div>}
-      </section>
-      <span className="message-time">сейчас</span>
-      {messages.length===0?<section className="ai-question"><h3>Хотите, чтобы я спланировал завтрашний день?</h3></section>:messages.slice(-5).map((item,index)=><ChatMessage key={index} message={item}/>)}
-      <div ref={endRef}/>
-    </div>
-    <div className="quick-prompts">{['Да, давай','Улучшить сон','Мой стресс'].map(item=><button key={item} onClick={()=>send(item)}>{item}</button>)}</div>
-    <form className="assistant-input" onSubmit={event=>{event.preventDefault();void send()}}><input value={text} onChange={event=>setText(event.target.value)} placeholder="Напишите сообщение…"/><button disabled={!text.trim()||sending} aria-label="Отправить"><Send/></button></form>
   </aside>
 }
 

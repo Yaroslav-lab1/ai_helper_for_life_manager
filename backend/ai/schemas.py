@@ -151,6 +151,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     conversation_id: int | None = None
     selected_date: date | None = None
+    auto_execute_actions: bool = False
 
 
 class GoalPlanRequest(BaseModel):

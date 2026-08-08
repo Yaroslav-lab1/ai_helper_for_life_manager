@@ -10,7 +10,6 @@ from backend.config import settings
 from backend.database import SessionLocal
 from backend.models import (
     BalanceAssessment,
-    ChatMessage,
     Event,
     Goal,
     GoalStep,
@@ -25,7 +24,7 @@ from backend.services.security import hash_password
 from backend.services.time import local_datetime_utc, today_for
 
 
-SeedModel = TypeVar("SeedModel", Event, Task, Goal, Habit, BalanceAssessment, Recommendation, ChatMessage)
+SeedModel = TypeVar("SeedModel", Event, Task, Goal, Habit, BalanceAssessment, Recommendation)
 
 
 def _sync(db: Session, model: type[SeedModel], user_id: int, key: str, values: dict[str, Any]) -> SeedModel:
@@ -125,7 +124,6 @@ def seed_demo() -> None:
 
         _sync(db, BalanceAssessment, user.id, "current-balance", {"assessment_date": today - timedelta(days=2), "health": 7, "career": 8, "finance": 6, "relationships": 7, "growth": 8, "recreation": 5, "environment": 8, "contribution": 6, "note": "Хочется больше времени на спокойный отдых."})
         _sync(db, Recommendation, user.id, "recovery-evening", {"kind": "balance", "title": "Освободите вечер для восстановления", "body": "Отдых сейчас заметно отстаёт от остальных сфер. Один вечер без рабочих задач поможет удержать темп.", "action": "Забронировать вечер"})
-        _sync(db, ChatMessage, user.id, "welcome", {"role": "assistant", "content": "Привет! Я вижу ваш план, цели и привычки. Помогу расставить приоритеты или разгрузить день."})
         db.commit()
         print(f"Development demo data synchronized for {settings.demo_email}")
     except Exception:

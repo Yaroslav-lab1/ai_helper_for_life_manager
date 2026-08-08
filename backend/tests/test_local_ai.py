@@ -18,17 +18,26 @@ from backend.ai.client import (
     MockLLMClient,
     OllamaLLMClient,
 )
+from backend.ai.chat_service import ChatService
+from backend.ai.context_service import UserContextService
 from backend.ai.factory import create_llm_client, get_llm_client
 from backend.ai.goal_planner_service import GoalPlannerService, GoalPlanValidationError
 from backend.ai.schemas import goal_plan_response_schema
 from backend.database import SessionLocal
-from backend.models import AIActionProposal, AIConversation, Goal, GoalPlan, Task, User
+from backend.models import AIActionProposal, AIConversation, AIMessage, Event, Goal, GoalPlan, Task, User
 
 
 def test_llm_factory_selects_mock_ollama_and_gigachat():
-    mock_settings = SimpleNamespace(llm_provider="mock")
+    mock_settings = SimpleNamespace(llm_provider="mock", environment="test")
     with patch("backend.ai.factory.get_settings", return_value=mock_settings):
         assert isinstance(create_llm_client(), MockLLMClient)
+
+    with patch(
+        "backend.ai.factory.get_settings",
+        return_value=SimpleNamespace(llm_provider="mock", environment="development"),
+    ):
+        with pytest.raises(ValueError, match="только в автоматических тестах"):
+            create_llm_client()
 
     ollama_settings = SimpleNamespace(
         llm_provider="ollama",
@@ -211,6 +220,87 @@ def test_gigachat_requires_authorization_key():
         asyncio.run(client.status())
 
 
+def test_gigachat_empty_stream_retries_with_provider_completion():
+    calls: list[dict] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        calls.append(payload)
+        if payload["stream"]:
+            return httpx.Response(
+                200,
+                headers={"x-request-id": "empty-stream-test"},
+                text="\n\n".join([
+                    'data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}',
+                    "data: [DONE]",
+                ]),
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "Ответ GigaChat после повторного запроса"}}]},
+        )
+
+    client = GigaChatLLMClient(
+        "GigaChat-2",
+        "secret-key",
+        transport=httpx.MockTransport(responder),
+        clock=lambda: 1_800_000_000,
+    )
+    client._access_token = "access"
+    client._access_token_expires_at = 1_800_001_000
+
+    async def collect() -> str:
+        stream = await client.chat([
+            {"role": "system", "content": "Ответь по контексту"},
+            {"role": "user", "content": "Старый вопрос"},
+            {"role": "assistant", "content": "Старый ответ"},
+            {"role": "user", "content": "с 14 до 17"},
+        ], stream=True)
+        assert not isinstance(stream, str)
+        return "".join([chunk async for chunk in stream])
+
+    assert asyncio.run(collect()) == "Ответ GigaChat после повторного запроса"
+    assert [payload["stream"] for payload in calls] == [True, False]
+    assert [message["role"] for message in calls[1]["messages"]] == ["system", "user"]
+    assert "Старый вопрос" not in calls[1]["messages"][-1]["content"]
+    assert "Обязательно верни непустой ответ" in calls[1]["messages"][-1]["content"]
+
+
+def test_gigachat_empty_completion_retries_for_action_classifier():
+    calls: list[dict] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        calls.append(payload)
+        if len(calls) == 1:
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]},
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"has_proposal":false}'}}]},
+        )
+
+    client = GigaChatLLMClient(
+        "GigaChat-2",
+        "secret-key",
+        transport=httpx.MockTransport(responder),
+        clock=lambda: 1_800_000_000,
+    )
+    client._access_token = "access"
+    client._access_token_expires_at = 1_800_001_000
+
+    result = asyncio.run(client.chat([
+        {"role": "system", "content": "Верни JSON"},
+        {"role": "user", "content": "Определи действие"},
+    ]))
+
+    assert result == '{"has_proposal":false}'
+    assert len(calls) == 2
+    assert "Обязательно верни непустой ответ" in calls[1]["messages"][-1]["content"]
+
+
 def test_gigachat_serializes_generation_requests():
     active = 0
     max_active = 0
@@ -261,6 +351,360 @@ def test_streaming_chat_conversations_and_user_isolation(client: TestClient, aut
     other_auth = {"Authorization": f"Bearer {other['access_token']}"}
     assert client.get(f"/api/v1/ai/conversations/{conversation_id}/messages", headers=other_auth).status_code == 404
     assert client.delete(f"/api/v1/ai/conversations/{conversation_id}", headers=auth).status_code == 204
+
+
+def test_safe_context_marks_energy_as_calculated_forecast(auth: dict[str, str]):
+    del auth
+    db = SessionLocal()
+    try:
+        user = db.scalar(select(User).where(User.email == "test@example.com"))
+        context = UserContextService().build(db, user, "Что порекомендуешь?", date(2031, 5, 17))
+        assert "energy" not in context
+        assert context["energy_forecast"]["source"] == "calculated_by_axel_one_not_user_reported"
+        assert context["selected_date"] == "2031-05-17"
+    finally:
+        db.close()
+
+
+def test_llm_history_collapses_unanswered_same_role_runs():
+    previous = [
+        SimpleNamespace(role="user", content="Первый старый повтор"),
+        SimpleNamespace(role="user", content="Последний старый повтор"),
+        SimpleNamespace(role="assistant", content="Уточните время"),
+        SimpleNamespace(role="user", content="с 14 до 17"),
+        SimpleNamespace(role="user", content="с 14 до 17"),
+    ]
+
+    history = ChatService._llm_history(previous, "Давай с 14 до 17")
+
+    assert history == [
+        {"role": "user", "content": "Последний старый повтор"},
+        {"role": "assistant", "content": "Уточните время"},
+        {"role": "user", "content": "Давай с 14 до 17"},
+    ]
+    assert all(left["role"] != right["role"] for left, right in zip(history, history[1:]))
+
+
+def test_chat_service_uses_llm_response_history_and_selected_date(auth: dict[str, str]):
+    del auth
+
+    class RecordingLLMClient(LLMClient):
+        def __init__(self):
+            self.calls: list[tuple[list[dict], dict]] = []
+            self.responses = iter(["Первый ответ LLM", "Точный второй ответ LLM"])
+
+        async def status(self):
+            return {"available": True, "provider": "test", "model": "recording"}
+
+        async def chat(self, messages, **kwargs):
+            if kwargs.get("response_schema") is not None:
+                return json.dumps({"has_proposal": False})
+            self.calls.append((messages, kwargs))
+            response = next(self.responses)
+
+            async def chunks():
+                yield response[:7]
+                yield response[7:]
+
+            return chunks()
+
+    class RecordingContextService:
+        def __init__(self):
+            self.calls: list[tuple[str, date | None]] = []
+
+        def build(self, db, user, question, selected_date=None):
+            del db, user
+            self.calls.append((question, selected_date))
+            return {"selected_date": selected_date.isoformat() if selected_date else None, "safe": True}
+
+    llm = RecordingLLMClient()
+    context = RecordingContextService()
+    service = ChatService(llm, context)
+    selected_date = date(2031, 5, 17)
+
+    async def collect(db, user, message, conversation_id=None):
+        return [
+            event
+            async for event in service.stream_reply(
+                db,
+                user,
+                message,
+                conversation_id=conversation_id,
+                selected_date=selected_date,
+            )
+        ]
+
+    db = SessionLocal()
+    try:
+        user = db.scalar(select(User).where(User.email == "test@example.com"))
+        with patch("backend.ai.engine.compose_chat_reply", create=True) as compose:
+            first_events = asyncio.run(collect(db, user, "Первый вопрос"))
+            conversation_id = next(event["conversation_id"] for event in first_events if event["event"] == "meta")
+            second_events = asyncio.run(collect(db, user, "Второй вопрос", conversation_id))
+            compose.assert_not_called()
+
+        assert "".join(
+            event.get("text", "") for event in second_events if event["event"] == "chunk"
+        ) == "Точный второй ответ LLM"
+        assert next(event for event in second_events if event["event"] == "done")["text"] == (
+            "Точный второй ответ LLM"
+        )
+        assert context.calls == [("Первый вопрос", selected_date), ("Второй вопрос", selected_date)]
+        assert llm.calls[0][0][-1] == {"role": "user", "content": "Первый вопрос"}
+        assert llm.calls[1][0][-3:] == [
+            {"role": "user", "content": "Первый вопрос"},
+            {"role": "assistant", "content": "Первый ответ LLM"},
+            {"role": "user", "content": "Второй вопрос"},
+        ]
+        assert llm.calls[1][1]["stream"] is True
+        system_messages = [message for message in llm.calls[1][0] if message["role"] == "system"]
+        assert len(system_messages) == 1
+        assert llm.calls[1][0][0] == system_messages[0]
+        assert '"selected_date": "2031-05-17"' in system_messages[0]["content"]
+        assert "Безопасный контекст пользователя" in system_messages[0]["content"]
+        stored = db.scalars(
+            select(AIMessage).where(AIMessage.conversation_id == conversation_id).order_by(AIMessage.id)
+        ).all()
+        assert [message.content for message in stored] == [
+            "Первый вопрос",
+            "Первый ответ LLM",
+            "Второй вопрос",
+            "Точный второй ответ LLM",
+        ]
+    finally:
+        db.close()
+
+
+def test_action_proposal_json_is_hidden_and_invalid_confirmation_is_rejected(auth: dict[str, str]):
+    del auth
+    invalid_response = """Сначала выберите одну важную задачу из списка.
+
+```json
+{"type":"calendar_action_proposal","title":"Выбрать задачу","description":"Выберите одну важную задачу.","requires_confirmation":false,"payload":{}}
+```"""
+    valid_response = """Могу добавить задачу после вашего подтверждения.
+
+```json
+{"type":"task_action_proposal","title":"Подготовить отчёт","description":"Добавить задачу «Подготовить отчёт».","requires_confirmation":true,"payload":{"title":"Подготовить отчёт","estimate_minutes":45}}
+```"""
+
+    class ProposalLLMClient(LLMClient):
+        def __init__(self):
+            self.responses = iter([invalid_response, valid_response])
+            self.calls: list[list[dict]] = []
+
+        async def status(self):
+            return {"available": True, "provider": "test", "model": "proposal-test"}
+
+        async def chat(self, messages, **kwargs):
+            if kwargs.get("response_schema") is not None:
+                return json.dumps({"has_proposal": False})
+            self.calls.append(messages)
+            response = next(self.responses)
+
+            async def chunks():
+                for index in range(0, len(response), 5):
+                    yield response[index:index + 5]
+
+            return chunks()
+
+    class SafeContextService:
+        def build(self, db, user, question, selected_date=None):
+            del db, user, question, selected_date
+            return {"tasks": [{"title": "Подготовить отчёт"}]}
+
+    llm = ProposalLLMClient()
+    service = ChatService(llm, SafeContextService())
+
+    async def collect(db, user, message, conversation_id=None):
+        return [
+            event
+            async for event in service.stream_reply(
+                db, user, message, conversation_id=conversation_id
+            )
+        ]
+
+    db = SessionLocal()
+    try:
+        user = db.scalar(select(User).where(User.email == "test@example.com"))
+        first_events = asyncio.run(collect(db, user, "Что порекомендуешь?"))
+        conversation_id = next(event["conversation_id"] for event in first_events if event["event"] == "meta")
+        first_done = next(event for event in first_events if event["event"] == "done")
+        first_stream = "".join(
+            event.get("text", "") for event in first_events if event["event"] == "chunk"
+        )
+
+        assert first_stream.strip() == "Сначала выберите одну важную задачу из списка."
+        assert first_done["text"] == "Сначала выберите одну важную задачу из списка."
+        assert first_done["proposals"] == []
+        assert "```json" not in first_stream
+
+        second_events = asyncio.run(
+            collect(db, user, "Добавь задачу «Подготовить отчёт» на 45 минут", conversation_id)
+        )
+        second_done = next(event for event in second_events if event["event"] == "done")
+        second_stream = "".join(
+            event.get("text", "") for event in second_events if event["event"] == "chunk"
+        )
+
+        assert second_stream.strip() == "Могу добавить задачу после вашего подтверждения."
+        assert second_done["text"] == "Могу добавить задачу после вашего подтверждения."
+        assert len(second_done["proposals"]) == 1
+        assert second_done["proposals"][0]["requires_confirmation"] is True
+        assert "```json" not in second_stream
+        assert llm.calls[1][-3] == {"role": "user", "content": "Что порекомендуешь?"}
+        assert llm.calls[1][-2] == {
+            "role": "assistant",
+            "content": "Сначала выберите одну важную задачу из списка.",
+        }
+
+        stored = db.scalars(
+            select(AIMessage).where(AIMessage.conversation_id == conversation_id).order_by(AIMessage.id)
+        ).all()
+        assert "```json" not in stored[1].content
+        assert "```json" not in stored[3].content
+        assert ChatService.visible_content(invalid_response) == first_done["text"]
+    finally:
+        db.close()
+
+
+def test_structured_llm_action_proposal_is_saved_separately_from_visible_text(auth: dict[str, str]):
+    del auth
+
+    class StructuredProposalLLMClient(LLMClient):
+        def __init__(self):
+            self.calls: list[tuple[list[dict], dict]] = []
+
+        async def status(self):
+            return {"available": True, "provider": "test", "model": "structured-proposal"}
+
+        async def chat(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            if kwargs.get("response_schema") is not None:
+                return json.dumps({
+                    "has_proposal": True,
+                    "action_type": "calendar_action_proposal",
+                    "title": "Запланировать плавание",
+                    "description": "Добавить плавание с 14:00 до 17:00.",
+                    "calendar_title": "Плавание",
+                    "start_at": "2031-05-17T14:00:00",
+                    "end_at": "2031-05-17T17:00:00",
+                    "category": "health",
+                    "task_title": "",
+                    "priority": "",
+                    "estimate_minutes": 0,
+                }, ensure_ascii=False)
+
+            async def chunks():
+                yield "Подготовил предложение события. "
+                yield "Подтвердите его перед добавлением."
+
+            return chunks()
+
+    class SelectedDateContextService:
+        def build(self, db, user, question, selected_date=None):
+            del db, user, question
+            return {"selected_date": selected_date.isoformat(), "user": {"timezone": "Europe/Moscow"}}
+
+    llm = StructuredProposalLLMClient()
+    service = ChatService(llm, SelectedDateContextService())
+    db = SessionLocal()
+    try:
+        user = db.scalar(select(User).where(User.email == "test@example.com"))
+
+        async def collect():
+            return [
+                event
+                async for event in service.stream_reply(
+                    db,
+                    user,
+                    "Давай запланируем плавание с 14 до 17",
+                    selected_date=date(2031, 5, 17),
+                    auto_execute_actions=True,
+                )
+            ]
+
+        events = asyncio.run(collect())
+        done = next(event for event in events if event["event"] == "done")
+        assert done["text"] == "Подготовил предложение события. Подтвердите его перед добавлением."
+        assert len(done["proposals"]) == 1
+        assert done["proposals"][0]["type"] == "calendar_action_proposal"
+        assert done["proposals"][0]["requires_confirmation"] is True
+        assert done["proposals"][0]["status"] == "confirmed"
+        assert done["action_error"] is None
+        assert llm.calls[0][1]["stream"] is True
+        assert llm.calls[1][1]["stream"] is False
+        assert llm.calls[1][1]["response_schema"]["additionalProperties"] is False
+        proposal = db.scalar(select(AIActionProposal).where(AIActionProposal.id == done["proposals"][0]["id"]))
+        assert json.loads(proposal.payload)["start_at"] == "2031-05-17T14:00:00"
+        event = db.scalar(select(Event).where(Event.user_id == user.id, Event.title == "Плавание"))
+        assert event is not None
+    finally:
+        db.close()
+
+
+def test_gigachat_action_classifier_uses_prompt_schema_without_response_format():
+    class PlainJSONGigaClient(LLMClient):
+        provider = "gigachat"
+
+        def __init__(self):
+            self.calls: list[tuple[list[dict], dict]] = []
+
+        async def status(self):
+            return {"available": True, "provider": self.provider, "model": "test"}
+
+        async def chat(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            return """```json
+{"has_proposal":false,"action_type":"none","title":"","description":"","calendar_title":"","start_at":"","end_at":"","category":"","task_title":"","priority":"","estimate_minutes":0}
+```"""
+
+    llm = PlainJSONGigaClient()
+    service = ChatService(llm)
+    result = asyncio.run(service._generate_action_proposal(
+        {"selected_date": "2031-05-17"},
+        [{"role": "user", "content": "Что порекомендуешь?"}],
+        "Уточните, какое действие вы хотите запланировать.",
+    ))
+
+    assert result is None
+    assert llm.calls[0][1]["response_schema"] is None
+    assert "JSON Schema" in llm.calls[0][0][0]["content"]
+
+
+def test_unavailable_llm_returns_error_without_fallback(client: TestClient, auth: dict[str, str]):
+    class UnavailableLLMClient(LLMClient):
+        async def status(self):
+            raise LLMUnavailableError("Тестовый LLM-провайдер недоступен")
+
+        async def chat(self, messages, **kwargs):
+            raise AssertionError("chat must not run when provider status is unavailable")
+
+    with patch("backend.api.ai.get_llm_client", return_value=UnavailableLLMClient()):
+        response = client.post("/api/v1/ai/chat", headers=auth, json={"message": "Мой запрос"})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Тестовый LLM-провайдер недоступен"}
+    assert client.get("/api/v1/ai/conversations", headers=auth).json() == []
+
+    class FailingStreamLLMClient(LLMClient):
+        async def status(self):
+            return {"available": True, "provider": "test", "model": "failing-stream"}
+
+        async def chat(self, messages, **kwargs):
+            raise LLMUnavailableError("LLM отключился во время генерации")
+
+    with patch("backend.api.ai.get_llm_client", return_value=FailingStreamLLMClient()):
+        streamed = client.post("/api/v1/ai/chat", headers=auth, json={"message": "Второй запрос"})
+
+    assert streamed.status_code == 200
+    assert '"event": "error"' in streamed.text
+    assert "LLM отключился во время генерации" in streamed.text
+    conversations = client.get("/api/v1/ai/conversations", headers=auth).json()
+    messages = client.get(
+        f"/api/v1/ai/conversations/{conversations[0]['id']}/messages", headers=auth
+    ).json()
+    assert [(message["role"], message["content"]) for message in messages] == [("user", "Второй запрос")]
 
 
 def test_goal_plan_generation_regeneration_apply_and_cancel(client: TestClient, auth: dict[str, str]):

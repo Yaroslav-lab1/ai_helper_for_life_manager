@@ -53,22 +53,6 @@ export async function downloadAccountExport(): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
-export async function streamChat(message: string, onChunk: (text:string)=>void, context: {selected_date?:string} = {}): Promise<void> {
-  const response = await fetch(`${API_URL}/chat/stream`, {
-    method:'POST', credentials:'include',
-    headers:{'Content-Type':'application/json', Authorization:`Bearer ${session.access}`},
-    body:JSON.stringify({message,...context}),
-  })
-  if (!response.ok || !response.body) throw new Error('Чат временно недоступен')
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  while (true) {
-    const {done, value} = await reader.read()
-    if (done) break
-    onChunk(decoder.decode(value, {stream:true}))
-  }
-}
-
 export type AIStreamEvent = {
   event:'meta'|'chunk'|'done'|'error'
   text?:string
@@ -76,10 +60,11 @@ export type AIStreamEvent = {
   conversation_id?:number
   message_id?:number
   proposals?:import('../types').AIActionProposal[]
+  action_error?:string|null
 }
 
 export async function streamAIChat(
-  payload: {message:string;conversation_id?:number;selected_date?:string},
+  payload: {message:string;conversation_id?:number;selected_date?:string;auto_execute_actions?:boolean},
   onEvent: (event:AIStreamEvent)=>void,
   signal?: AbortSignal,
   retry = true,

@@ -37,11 +37,12 @@ export function ChatPanel({onClose}:{onClose:()=>void}) {
   }
   const stop=()=>{controllerRef.current?.abort();controllerRef.current=null;setSending(false)}
 
-  const send=async(value=text)=>{
+  const send=async(value=text,replaceFailed=false)=>{
     const message=value.trim();if(!message||sending||!consent||(consent.required&&!consent.active))return
     setText('');setSending(true);setError('')
-    const assistantIndex=messages.length+1
-    setMessages(prev=>[...prev,{role:'user',content:message},{role:'assistant',content:''}])
+    const baseMessages=replaceFailed&&messages.at(-1)?.role==='user'&&messages.at(-1)?.content===message?messages.slice(0,-1):messages
+    const assistantIndex=baseMessages.length+1
+    setMessages([...baseMessages,{role:'user',content:message},{role:'assistant',content:''}])
     const controller=new AbortController();controllerRef.current=controller
     try{
       await streamAIChat({message,conversation_id:conversationId},event=>{
@@ -49,7 +50,7 @@ export function ChatPanel({onClose}:{onClose:()=>void}) {
         if(event.event==='chunk'&&event.text)setMessages(prev=>prev.map((item,index)=>index===assistantIndex?{...item,content:item.content+event.text}:item))
         if(event.event==='done'){
           if(event.conversation_id)setConversationId(event.conversation_id)
-          setMessages(prev=>prev.map((item,index)=>index===assistantIndex?{...item,id:event.message_id,proposals:event.proposals}:item))
+          setMessages(prev=>prev.map((item,index)=>index===assistantIndex?{...item,id:event.message_id,content:event.text??item.content,proposals:event.proposals}:item))
         }
       },controller.signal)
       await refreshConversations()
@@ -58,12 +59,12 @@ export function ChatPanel({onClose}:{onClose:()=>void}) {
       if((err as Error).name!=='AbortError'){
         const messageText=err instanceof Error?err.message:'Не удалось ответить'
         setError(messageText)
-        setMessages(prev=>prev.map((item,index)=>index===assistantIndex&&item.content===''?{...item,content:messageText}:item))
+        setMessages(prev=>prev.filter((item,index)=>index!==assistantIndex||item.content!==''))
       }
     }finally{if(controllerRef.current===controller)controllerRef.current=null;setSending(false)}
   }
 
-  const retry=()=>{const last=[...messages].reverse().find(item=>item.role==='user');if(last)void send(last.content)}
+  const retry=()=>{const last=[...messages].reverse().find(item=>item.role==='user');if(last)void send(last.content,true)}
   const updateProposal=async(proposal:AIActionProposal,action:'confirm'|'cancel')=>{
     try{
       const updated=action==='confirm'

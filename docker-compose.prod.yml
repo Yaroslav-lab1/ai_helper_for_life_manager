@@ -10,6 +10,7 @@ services:
       ENABLE_DEMO_SEED: "false"
       USE_SECURE_AUTH_COOKIES: "true"
       REFRESH_COOKIE_SAMESITE: ${REFRESH_COOKIE_SAMESITE:-lax}
+
       EMAIL_BACKEND: smtp
       SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST for production email}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -17,6 +18,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
       EMAIL_FROM: ${EMAIL_FROM:?Set EMAIL_FROM for production email}
+
     ports: !reset []
 
   frontend:
@@ -25,23 +27,33 @@ services:
         VITE_API_URL: /api/v1
         VITE_ENABLE_DEMO_LOGIN: "false"
         VITE_DEMO_PASSWORD: ""
+
     ports: !reset []
 
   caddy:
     image: caddy:2.10-alpine
+
     environment:
       DOMAIN: ${DOMAIN:?Set the production DOMAIN in .env}
+
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"
+
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+
     depends_on:
       frontend:
         condition: service_healthy
+
     restart: unless-stopped
 
 volumes:

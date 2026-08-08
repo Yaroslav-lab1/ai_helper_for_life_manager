@@ -423,7 +423,40 @@ class GigaChatLLMClient(LLMClient):
 
     async def _complete(self, payload: dict[str, Any]) -> str:
         async with self._generation_lock:
-            return await self._complete_unlocked(payload)
+            try:
+                return await self._complete_unlocked(payload)
+            except LLMResponseError as exc:
+                if str(exc) != "GigaChat завершил генерацию без текста. Повторите попытку":
+                    raise
+                logger.warning("GigaChat completion returned no text. Retrying with compact recovery context")
+                return await self._complete_unlocked(self._recovery_payload(payload))
+
+    @staticmethod
+    def _recovery_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        messages = payload.get("messages") or []
+        system_message = next(
+            (message for message in messages if message.get("role") == "system"),
+            None,
+        )
+        last_user = next(
+            (message for message in reversed(messages) if message.get("role") == "user"),
+            {"role": "user", "content": "Сформируй ответ пользователю"},
+        )
+        recovery_user = {
+            **last_user,
+            "content": (
+                str(last_user.get("content", "")).strip()
+                + "\n\nПредыдущая генерация завершилась без текста. "
+                "Обязательно верни непустой ответ в формате, указанном системной инструкцией."
+            ),
+        }
+        recovery_messages = [system_message, recovery_user] if system_message is not None else [recovery_user]
+        return {
+            **payload,
+            "messages": recovery_messages,
+            "stream": False,
+            "temperature": min(0.2, float(payload.get("temperature", 0.2))),
+        }
 
     async def _complete_unlocked(self, payload: dict[str, Any]) -> str:
         response = await self._api_request(
@@ -436,6 +469,8 @@ class GigaChatLLMClient(LLMClient):
             content = data["choices"][0]["message"]["content"]
             if not isinstance(content, str):
                 raise TypeError("message.content is not text")
+            if not content.strip():
+                raise LLMResponseError("GigaChat завершил генерацию без текста. Повторите попытку")
             return content
         except (IndexError, KeyError, TypeError, ValueError) as exc:
             raise LLMResponseError("GigaChat вернул некорректный ответ") from exc
@@ -449,6 +484,8 @@ class GigaChatLLMClient(LLMClient):
         emitted = False
         for attempt in range(2):
             token = await self._get_access_token()
+            finish_reason: str | None = None
+            request_id: str | None = None
             try:
                 async with self._client() as client:
                     async with client.stream(
@@ -471,17 +508,30 @@ class GigaChatLLMClient(LLMClient):
                         if response.is_error:
                             await response.aread()
                             self._raise_for_api_error(response)
+                        request_id = response.headers.get("x-request-id")
                         async for line in response.aiter_lines():
                             if not line.startswith("data:"):
                                 continue
                             encoded = line[5:].strip()
                             if encoded == "[DONE]":
-                                return
+                                break
                             data = json.loads(encoded)
-                            chunk = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            choice = data.get("choices", [{}])[0]
+                            finish_reason = choice.get("finish_reason") or finish_reason
+                            chunk = choice.get("delta", {}).get("content", "")
                             if chunk:
                                 emitted = True
                                 yield str(chunk)
+                if emitted:
+                    return
+                logger.warning(
+                    "GigaChat stream completed without text; finish_reason=%s request_id=%s. "
+                    "Retrying once with compact recovery context",
+                    finish_reason,
+                    request_id,
+                )
+                fallback = await self._complete_unlocked(self._recovery_payload(payload))
+                yield fallback
                 return
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
                 if attempt == 0 and not emitted:

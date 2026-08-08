@@ -2,9 +2,13 @@ import os
 from pathlib import Path
 
 TEST_DB = Path(__file__).parent / "test_axel.db"
+os.environ["ENVIRONMENT"] = "test"
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["SECRET_KEY"] = "test-key-only"
 os.environ["LLM_PROVIDER"] = "mock"
+os.environ["TRUSTED_HOSTS"] = "localhost,127.0.0.1,testserver"
+os.environ["USE_SECURE_AUTH_COOKIES"] = "false"
+os.environ["EMAIL_BACKEND"] = "console"
 
 import pytest
 from fastapi.testclient import TestClient

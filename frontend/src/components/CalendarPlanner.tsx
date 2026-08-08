@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CalendarPlus, Check, Diamond, RefreshCw, Send, Trash2, X } from 'lucide-react'
-import { api, streamChat } from '../lib/api'
-import type { ChatMessage, EnergyForecast, EnergyPoint, EnergyRecommendation, EventItem } from '../types'
+import { AlertTriangle, CalendarPlus, Check, Diamond, RefreshCw, Send, ShieldCheck, Trash2, X } from 'lucide-react'
+import { api, streamAIChat } from '../lib/api'
+import type { AIActionProposal, AIConsent, ChatMessage, EnergyForecast, EnergyPoint, EnergyRecommendation, EventItem } from '../types'
+import { PrivacyPolicy } from './PrivacyPolicy'
 
 type PlannerTab='plan'|'energy'|'chat'
 type PlanStatus='idle'|'loading'|'added'|'dismissed'|'error'
 const tabs:{id:PlannerTab;label:string}[]=[{id:'plan',label:'План дня'},{id:'energy',label:'Энергия'},{id:'chat',label:'Чат'}]
+const PLANNER_CONVERSATION_KEY='axel_planner_conversation_id'
 const toDateKey=(value:Date)=>value.toLocaleDateString('sv-SE')
 const localDateTime=(value:Date)=>new Date(value.getTime()-value.getTimezoneOffset()*60000).toISOString().slice(0,19)
 const PlannerBadge=({children,tone}:{children:React.ReactNode;tone:'gold'|'green'|'blue'})=><span className={`badge badge-${tone}`}>{children}</span>
@@ -41,14 +43,85 @@ function EnergyPanel({forecast,loading,error,period,onPeriod,reload}:{forecast:E
   </div>
 }
 
-function PlannerChat({selectedDate}:{selectedDate:string}) {
-  const [messages,setMessages]=useState<ChatMessage[]>([]);const [text,setText]=useState('');const [sending,setSending]=useState(false);const [error,setError]=useState('');const [lastMessage,setLastMessage]=useState('');const endRef=useRef<HTMLDivElement>(null)
-  useEffect(()=>{void api<ChatMessage[]>('/chat/history').then(setMessages).catch(err=>setError(err instanceof Error?err.message:'История недоступна'))},[])
+function PlannerChat({selectedDate,onCalendarChanged}:{selectedDate:string;onCalendarChanged:()=>void}) {
+  const [messages,setMessages]=useState<ChatMessage[]>([])
+  const [conversationId,setConversationId]=useState<number|undefined>()
+  const [consent,setConsent]=useState<AIConsent|null>(null)
+  const [consentLoading,setConsentLoading]=useState(true)
+  const [consentChecked,setConsentChecked]=useState(false)
+  const [privacy,setPrivacy]=useState(false)
+  const [text,setText]=useState('');const [sending,setSending]=useState(false);const [error,setError]=useState('');const [lastMessage,setLastMessage]=useState('');const endRef=useRef<HTMLDivElement>(null)
+  const loadConsent=async()=>{
+    setConsentLoading(true)
+    try{setConsent(await api<AIConsent>('/settings/ai-consent'))}
+    catch(err){setError(err instanceof Error?err.message:'Не удалось проверить согласие')}
+    finally{setConsentLoading(false)}
+  }
+  useEffect(()=>{
+    void loadConsent()
+    const saved=Number(sessionStorage.getItem(PLANNER_CONVERSATION_KEY))
+    if(!Number.isInteger(saved)||saved<=0)return
+    void api<ChatMessage[]>(`/ai/conversations/${saved}/messages`).then(items=>{setConversationId(saved);setMessages(items)}).catch(()=>sessionStorage.removeItem(PLANNER_CONVERSATION_KEY))
+  },[])
   useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[messages])
-  const send=async(value=text)=>{const message=value.trim();if(!message||sending)return;setText('');setError('');setLastMessage(message);setSending(true);setMessages(prev=>[...prev,{role:'user',content:message,created_at:new Date().toISOString()},{role:'assistant',content:'',created_at:new Date().toISOString()}]);try{await streamChat(message,chunk=>setMessages(prev=>{const next=[...prev];next[next.length-1]={...next[next.length-1],content:next[next.length-1].content+chunk};return next}),{selected_date:selectedDate})}catch(err){setError(err instanceof Error?err.message:'Не удалось получить ответ');setMessages(prev=>prev.slice(0,-1))}finally{setSending(false)}}
-  const clear=async()=>{await api('/chat/history',{method:'DELETE'});setMessages([]);setError('')}
+  const send=async(value=text,replaceFailed=false)=>{
+    const message=value.trim();if(!message||sending||!consent||(consent.required&&!consent.active))return
+    setText('');setError('');setLastMessage(message);setSending(true)
+    const baseMessages=replaceFailed&&messages.at(-1)?.role==='user'&&messages.at(-1)?.content===message?messages.slice(0,-1):messages
+    const assistantIndex=baseMessages.length+1
+    setMessages([...baseMessages,{role:'user',content:message,created_at:new Date().toISOString()},{role:'assistant',content:'',created_at:new Date().toISOString()}])
+    try{
+      await streamAIChat({message,conversation_id:conversationId,selected_date:selectedDate,auto_execute_actions:true},event=>{
+        if(event.event==='meta'&&event.conversation_id){setConversationId(event.conversation_id);sessionStorage.setItem(PLANNER_CONVERSATION_KEY,String(event.conversation_id))}
+        if(event.event==='chunk'&&event.text)setMessages(prev=>prev.map((item,index)=>index===assistantIndex?{...item,content:item.content+event.text}:item))
+        if(event.event==='done'){
+          setMessages(prev=>prev.map((item,index)=>index===assistantIndex?{...item,id:event.message_id,content:event.text??item.content,proposals:event.proposals}:item))
+          if(event.proposals?.some(proposal=>proposal.type==='calendar_action_proposal'&&proposal.status==='confirmed'))onCalendarChanged()
+          if(event.action_error)setError(event.action_error)
+        }
+      })
+    }catch(err){setError(err instanceof Error?err.message:'Не удалось получить ответ');setMessages(prev=>prev.filter((item,index)=>index!==assistantIndex||item.content!==''))}
+    finally{setSending(false)}
+  }
+  const acceptConsent=async()=>{
+    if(!consentChecked||!consent)return
+    try{
+      const accepted=await api<AIConsent>('/settings/ai-consent',{method:'POST',body:JSON.stringify({accepted:true,policy_version:consent.policy_version})})
+      setConsent(accepted);setConsentChecked(false);setError('')
+    }catch(err){setError(err instanceof Error?err.message:'Не удалось сохранить согласие')}
+  }
+  const updateProposal=async(proposal:AIActionProposal,action:'confirm'|'cancel')=>{
+    try{
+      const updated=action==='confirm'
+        ?await api<AIActionProposal>(`/ai/action-proposals/${proposal.id}/confirm`,{method:'POST'})
+        :await api<AIActionProposal>(`/ai/action-proposals/${proposal.id}`,{method:'PATCH',body:JSON.stringify({status:'cancelled'})})
+      setMessages(prev=>prev.map(item=>({...item,proposals:item.proposals?.map(value=>value.id===updated.id?updated:value)})))
+      if(action==='confirm')onCalendarChanged()
+      setError('')
+    }catch(err){setError(err instanceof Error?err.message:'Не удалось обработать предложение')}
+  }
+  const clear=async()=>{if(conversationId)await api(`/ai/conversations/${conversationId}`,{method:'DELETE'});sessionStorage.removeItem(PLANNER_CONVERSATION_KEY);setConversationId(undefined);setMessages([]);setError('')}
   const prompts=['Оптимизируй мой день','Когда лучше выполнить сложную задачу?','Найди время для тренировки','У меня слишком много встреч?','Составь план на завтра']
-  return <div className="planner-chat"><div className="planner-chat-tools"><span>Контекст: {new Date(`${selectedDate}T12:00`).toLocaleDateString('ru-RU',{day:'numeric',month:'long'})}</span><button onClick={()=>void clear()} disabled={!messages.length}><Trash2/> Очистить</button></div><div className="planner-messages">{!messages.length&&!error&&<div className="chat-empty"><Diamond/><b>Спросите о вашем расписании</b><span>AI учтёт события, свободные окна, цели, привычки, энергию и нагрузку.</span></div>}{messages.map((message,index)=><div key={message.id||index} className={`planner-message ${message.role}`}><div>{message.content||<span className="typing"><b/><b/><b/></span>}</div><time>{message.created_at?new Date(message.created_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):''}</time></div>)}<div ref={endRef}/></div>{error&&<div className="chat-error"><AlertTriangle/><span>{error}</span><button onClick={()=>void send(lastMessage)}>Повторить</button></div>}<div className="planner-prompts">{prompts.map(prompt=><button key={prompt} onClick={()=>void send(prompt)} disabled={sending}>{prompt}</button>)}</div><form className="planner-chat-input" onSubmit={event=>{event.preventDefault();void send()}}><textarea rows={2} value={text} onChange={event=>setText(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();void send()}}} placeholder="Спросите о плане…"/><button disabled={!text.trim()||sending} aria-label="Отправить"><Send/></button></form></div>
+  const consentRequired=Boolean(consent?.required&&!consent.active)
+  return <>
+    <div className="planner-chat">
+      <div className="planner-chat-tools"><span>Контекст: {new Date(`${selectedDate}T12:00`).toLocaleDateString('ru-RU',{day:'numeric',month:'long'})}</span><button onClick={()=>void clear()} disabled={!messages.length}><Trash2/> Очистить</button></div>
+      {consentLoading?<div className="planner-loading"><i/><span>Проверяем настройки AI…</span></div>:!consent?<div className="planner-error"><AlertTriangle/><b>Не удалось проверить согласие</b><span>{error}</span><button onClick={()=>void loadConsent()}><RefreshCw/> Повторить</button></div>:consentRequired?<div className="chat-consent-gate">
+        <ShieldCheck/><h3>Нужно ваше согласие</h3>
+        <p>Для ответа GigaChat получит ваш вопрос, выбранную дату и минимизированный контекст: события, задачи, цели, привычки и показатели нагрузки.</p>
+        <button className="privacy-link" onClick={()=>setPrivacy(true)}>Прочитать политику</button>
+        <label><input type="checkbox" checked={consentChecked} onChange={event=>setConsentChecked(event.target.checked)}/><span>Я явно соглашаюсь на передачу описанного контекста в GigaChat.</span></label>
+        <button className="primary" disabled={!consentChecked} onClick={()=>void acceptConsent()}>Согласиться и продолжить</button>
+        {error&&<div className="chat-error"><AlertTriangle/><span>{error}</span></div>}
+      </div>:<>
+        <div className="planner-messages">{!messages.length&&!error&&<div className="chat-empty"><Diamond/><b>Спросите о вашем расписании</b><span>AI учтёт события, свободные окна, цели, привычки, энергию и нагрузку.</span></div>}{messages.map((message,index)=><div key={message.id||index} className={`planner-message ${message.role}`}><div>{message.content||<span className="typing"><b/><b/><b/></span>}</div>{message.proposals?.map(proposal=><article className="action-proposal" key={proposal.id}><b>{proposal.title}</b><p>{proposal.description}</p>{proposal.status==='pending'?<div><button className="primary" onClick={()=>void updateProposal(proposal,'confirm')}>Подтвердить</button><button onClick={()=>void updateProposal(proposal,'cancel')}>Отменить</button></div>:<small>{proposal.status==='confirmed'?'Подтверждено':'Отменено'}</small>}</article>)}<time>{message.created_at?new Date(message.created_at).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):''}</time></div>)}<div ref={endRef}/></div>
+        {error&&<div className="chat-error"><AlertTriangle/><span>{error}</span><button onClick={()=>void send(lastMessage,true)}>Повторить</button></div>}
+        <div className="planner-prompts">{prompts.map(prompt=><button key={prompt} onClick={()=>void send(prompt)} disabled={sending}>{prompt}</button>)}</div>
+        <form className="planner-chat-input" onSubmit={event=>{event.preventDefault();void send()}}><textarea rows={2} value={text} onChange={event=>setText(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();void send()}}} placeholder="Спросите о плане…"/><button disabled={!text.trim()||sending} aria-label="Отправить"><Send/></button></form>
+      </>}
+    </div>
+    {privacy&&<PrivacyPolicy onClose={()=>setPrivacy(false)}/>}
+  </>
 }
 
 export function AIPlannerPanel({events,selectedDate,open,onClose,onCalendarChanged}:{events:EventItem[];selectedDate:string;open:boolean;onClose:()=>void;onCalendarChanged:()=>void}) {
@@ -64,6 +137,6 @@ export function AIPlannerPanel({events,selectedDate,open,onClose,onCalendarChang
   return <aside className={`planner-panel ${open?'open':''}`}><div className="ai-panel-head"><span className="ai-sign"><Diamond/></span><div><b>AI-Планировщик</b><small><i/> Анализирует ваш день</small></div><button className="icon-btn planner-close" onClick={onClose} aria-label="Закрыть AI-планировщик"><X/></button></div><div className="planner-tabs" role="tablist" aria-label="Разделы AI-планировщика" onKeyDown={onTabKey}>{tabs.map(item=><button key={item.id} id={`planner-tab-${item.id}`} role="tab" aria-selected={tab===item.id} aria-controls={`planner-panel-${item.id}`} tabIndex={tab===item.id?0:-1} className={tab===item.id?'active':''} onClick={()=>setTab(item.id)}>{item.label}</button>)}</div><div className="planner-scroll" role="tabpanel" id={`planner-panel-${tab}`} aria-labelledby={`planner-tab-${tab}`}>
     {tab==='plan'&&<><h4>Рекомендованный план · {new Date(`${selectedDate}T12:00`).toLocaleDateString('ru-RU',{day:'numeric',month:'long'})}</h4>{loading?<div className="planner-loading"><i/><span>Анализируем свободные окна…</span></div>:error?<div className="planner-error"><AlertTriangle/><span>{error}</span><button onClick={()=>void loadEnergy()}>Повторить</button></div>:recommendations.map((item,index)=>{const key=`${item.kind}-${index}`;if(statuses[key]==='dismissed')return null;return <RecommendationCard key={key} recommendation={item} date={selectedDate} status={statuses[key]} time={times[key]||item.time} onTime={time=>setTimes(value=>({...value,[key]:time}))} onAdd={()=>void addRecommendation(item,index)} onDismiss={()=>setStatuses(value=>({...value,[key]:'dismissed'}))}/>})}</>}
     {tab==='energy'&&<EnergyPanel forecast={forecast} loading={loading} error={error} period={period} onPeriod={setPeriod} reload={()=>void loadEnergy()}/>} 
-    {tab==='chat'&&<PlannerChat selectedDate={selectedDate}/>} 
+    {tab==='chat'&&<PlannerChat selectedDate={selectedDate} onCalendarChanged={onCalendarChanged}/>}
   </div></aside>
 }

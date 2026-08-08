@@ -53,14 +53,18 @@ def test_habit_streak_and_balance_analytics(client: TestClient, auth: dict[str, 
     assert analytics["balance_score"] == 7.0
 
 
-def test_chat_stream_is_persisted(client: TestClient, auth: dict[str, str]):
-    response = client.post("/api/v1/chat/stream", headers=auth, json={"message": "Помоги спланировать сегодня", "selected_date": date.today().isoformat()})
+def test_ai_chat_stream_is_persisted(client: TestClient, auth: dict[str, str]):
+    response = client.post("/api/v1/ai/chat", headers=auth, json={"message": "Помоги спланировать сегодня", "selected_date": date.today().isoformat()})
     assert response.status_code == 200
-    assert date.today().strftime("%d.%m.%Y") in response.text
-    history = client.get("/api/v1/chat/history", headers=auth).json()
+    assert '"event": "chunk"' in response.text
+    conversations = client.get("/api/v1/ai/conversations", headers=auth).json()
+    assert len(conversations) == 1
+    conversation_id = conversations[0]["id"]
+    history = client.get(f"/api/v1/ai/conversations/{conversation_id}/messages", headers=auth).json()
     assert [item["role"] for item in history] == ["user", "assistant"]
-    assert client.delete("/api/v1/chat/history", headers=auth).status_code == 204
-    assert client.get("/api/v1/chat/history", headers=auth).json() == []
+    assert client.delete(f"/api/v1/ai/conversations/{conversation_id}", headers=auth).status_code == 204
+    assert client.get("/api/v1/ai/conversations", headers=auth).json() == []
+    assert client.post("/api/v1/chat/stream", headers=auth, json={"message": "legacy"}).status_code == 404
 
 
 def test_calendar_range_and_energy_forecast(client: TestClient, auth: dict[str, str]):

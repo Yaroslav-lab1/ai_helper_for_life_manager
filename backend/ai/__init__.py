@@ -1,3 +1,3 @@
-from backend.ai.engine import compose_chat_reply, decompose_goal, generate_recommendations
+from backend.ai.engine import decompose_goal, generate_recommendations
 
-__all__ = ["compose_chat_reply", "decompose_goal", "generate_recommendations"]
+__all__ = ["decompose_goal", "generate_recommendations"]

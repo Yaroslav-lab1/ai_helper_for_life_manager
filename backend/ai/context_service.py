@@ -98,7 +98,12 @@ class UserContextService:
                 "task_completion_rate": analytics["task_completion_rate"],
                 "habit_completion_rate": analytics["habit_completion_rate"],
             },
-            "energy": {"score": energy["score"], "status": energy["status"], "peak": energy["peak_start"]},
+            "energy_forecast": {
+                "source": "calculated_by_axel_one_not_user_reported",
+                "score": energy["score"],
+                "status": energy["status"],
+                "peak": energy["peak_start"],
+            },
             "overload": {
                 "level": overload["level"],
                 "score": overload["score"],

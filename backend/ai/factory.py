@@ -8,6 +8,8 @@ def create_llm_client() -> LLMClient:
     settings = get_settings()
     provider = settings.llm_provider.strip().lower()
     if provider == "mock":
+        if str(getattr(settings, "environment", "")).lower() != "test":
+            raise ValueError("LLM_PROVIDER=mock разрешён только в автоматических тестах")
         return MockLLMClient()
     if provider == "ollama":
         return OllamaLLMClient(
