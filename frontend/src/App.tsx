@@ -7,6 +7,7 @@ import PremiumDashboardPage from './components/PremiumDashboard'
 import PremiumCalendarPage from './components/PremiumCalendar'
 import { AIAssistantPanel, AppHeader, Logo, MobileScrim, Sidebar } from './components/PremiumShell'
 import { PrivacyPolicy } from './components/PrivacyPolicy'
+import { RequisitesPage } from './components/RequisitesPage'
 
 export type Page = 'dashboard'|'calendar'|'tasks'|'goals'|'habits'|'analytics'|'settings'
 
@@ -34,6 +35,7 @@ export default function App() {
   useEffect(()=>{const open=()=>setAssistant(true);window.addEventListener('axel:open-ai',open);return()=>window.removeEventListener('axel:open-ai',open)},[])
   useEffect(()=>{if(!session.access){setChecking(false);return}api<User>('/auth/me').then(setUser).catch(()=>session.clear()).finally(()=>setChecking(false))},[])
 
+  if(window.location.pathname.replace(/\/$/,'')==='/requisites')return <RequisitesPage/>
   const authenticated=(tokens:Tokens)=>{session.save(tokens);setUser(tokens.user)}
   const logout=()=>{void api('/auth/logout',{method:'POST'}).catch(()=>undefined).finally(()=>{session.clear();setUser(null);setMenu(false)})}
   const navigate=(next:Page)=>{setPage(next);setMenu(false);window.scrollTo({top:0,behavior:'smooth'})}
@@ -96,7 +98,7 @@ function AuthScreen({onAuth}:{onAuth:(tokens:Tokens)=>void}) {
       {mode==='login'&&<button className="demo-button" type="button" onClick={()=>setMode('forgot')}>Забыли пароль?</button>}
       {(mode==='forgot'||mode==='reset'||mode==='verify')&&<button className="demo-button" type="button" onClick={()=>setMode('login')}>Вернуться ко входу</button>}
       {demoEnabled&&mode==='login'&&<><button className="demo-button" type="button" onClick={demo}>Заполнить данные локального демо-аккаунта</button><small className="form-note">Доступно только в development</small></>}
-      <button className="privacy-link" type="button" onClick={()=>setPrivacy(true)}>Политика конфиденциальности</button>
+      <div className="auth-legal"><div><button className="privacy-link" type="button" onClick={()=>setPrivacy(true)}>Политика конфиденциальности</button><a className="privacy-link" href="/requisites">Контакты и реквизиты</a></div><small>Самозанятый · ИНН 773016037615</small></div>
     </form></section>
     {privacy&&<PrivacyPolicy onClose={()=>setPrivacy(false)}/>}
   </div>
