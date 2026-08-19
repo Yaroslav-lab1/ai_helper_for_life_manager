@@ -1,11 +1,9 @@
 import { ArrowLeft, BadgeCheck, Mail, ReceiptText } from 'lucide-react'
 import { useEffect } from 'react'
+import { LEGAL_DETAILS } from '../legal'
 import { Logo } from './PremiumShell'
 
-const SELLER_TAX_ID='773016037615'
-const CONTACT_EMAIL='axel.one.top@gmail.com'
-
-export function RequisitesPage() {
+export function RequisitesPage({onBack}:{onBack:()=>void}) {
   useEffect(()=>{
     const previousTitle=document.title
     document.title='Контакты и реквизиты — AXEL ONE'
@@ -14,8 +12,8 @@ export function RequisitesPage() {
 
   return <div className="requisites-page">
     <header className="requisites-header">
-      <Logo onClick={()=>window.location.assign('/')}/>
-      <a href="/" className="requisites-back"><ArrowLeft/>Вернуться на сайт</a>
+      <Logo onClick={onBack}/>
+      <button type="button" className="requisites-back" onClick={onBack}><ArrowLeft/>Вернуться на сайт</button>
     </header>
 
     <main className="requisites-main">
@@ -28,19 +26,19 @@ export function RequisitesPage() {
       <section className="requisites-card" aria-labelledby="seller-details-title">
         <div className="requisites-card-heading">
           <span><BadgeCheck/></span>
-          <div><small>Продавец</small><h2 id="seller-details-title">Самозанятый — плательщик НПД</h2></div>
+          <div><small>Продавец</small><h2 id="seller-details-title">{LEGAL_DETAILS.operatorName}</h2></div>
         </div>
         <dl>
           <div><dt>Наименование проекта</dt><dd>AXEL ONE</dd></div>
-          <div className="requisites-tax-id"><dt>ИНН продавца</dt><dd>{SELLER_TAX_ID}</dd></div>
-          <div><dt>Статус</dt><dd>Самозанятый, плательщик налога на профессиональный доход</dd></div>
-          <div><dt>Адрес сайта</dt><dd><a href="https://axel-one.ru/">axel-one.ru</a></dd></div>
+          <div className="requisites-tax-id"><dt>ИНН продавца</dt><dd>{LEGAL_DETAILS.taxId}</dd></div>
+          <div><dt>Статус</dt><dd>{LEGAL_DETAILS.status}</dd></div>
+          <div><dt>Адрес сайта</dt><dd><a href={LEGAL_DETAILS.siteUrl}>axel-one.ru</a></dd></div>
         </dl>
       </section>
 
       <section className="requisites-contact" aria-labelledby="contact-title">
         <Mail/>
-        <div><small>Связаться с нами</small><h2 id="contact-title">По вопросам оплаты и работы сервиса</h2><a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a></div>
+        <div><small>Связаться с нами</small><h2 id="contact-title">По вопросам оплаты и работы сервиса</h2><a href={`mailto:${LEGAL_DETAILS.email}`}>{LEGAL_DETAILS.email}</a></div>
       </section>
     </main>
 

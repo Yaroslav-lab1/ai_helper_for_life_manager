@@ -3,6 +3,7 @@ import {
   Goal, HeartPulse, LayoutDashboard, LogOut, Menu, ReceiptText, Sparkles, Target, X, Zap,
 } from 'lucide-react'
 import type { Page } from '../App'
+import { LEGAL_DETAILS } from '../legal'
 import type { CalendarView, EventItem, User } from '../types'
 import { ChatPanel } from './ChatPanel'
 
@@ -58,11 +59,11 @@ export function SidebarItem({item,active,onClick}:{item:NavEntry;active:boolean;
   </button>
 }
 
-export function Sidebar({page,user,open,navigate,onClose,onLogout,onAssistant}:{page:Page;user:User;open:boolean;navigate:(page:Page)=>void;onClose:()=>void;onLogout:()=>void;onAssistant:()=>void}) {
+export function Sidebar({page,user,open,navigate,onClose,onLogout,onAssistant,onRequisites}:{page:Page;user:User;open:boolean;navigate:(page:Page)=>void;onClose:()=>void;onLogout:()=>void;onAssistant:()=>void;onRequisites:()=>void}) {
   const group=(label:string,entries:NavEntry[])=><div className="nav-group"><p>{label}</p>{entries.map((item,index)=><SidebarItem key={`${label}-${item.label}`} item={item} active={page===item.id&&(item.id!=='analytics'||index===0)} onClick={()=>navigate(item.id)}/>)}</div>
   return <aside className={`sidebar premium-sidebar ${open?'open':''}`}>
     <div className="sidebar-mobile-head"><Logo onClick={()=>navigate('dashboard')}/><button className="icon-btn" onClick={onClose}><X/></button></div>
-    <nav>{group('Обзор',overview)}{group('Аналитика',analytics)}<div className="nav-group"><p>Система</p>{system.map(item=><SidebarItem key={`Система-${item.label}`} item={item} active={page===item.id} onClick={()=>navigate(item.id)}/>)}<a className="sidebar-item sidebar-requisites" href="/requisites"><ReceiptText/><span><strong>Реквизиты</strong><small>ИНН 773016037615</small></span></a></div></nav>
+    <nav>{group('Обзор',overview)}{group('Аналитика',analytics)}<div className="nav-group"><p>Система</p>{system.map(item=><SidebarItem key={`Система-${item.label}`} item={item} active={page===item.id} onClick={()=>navigate(item.id)}/>)}<a className="sidebar-item sidebar-requisites" href="/requisites" onClick={event=>{event.preventDefault();onRequisites()}}><ReceiptText/><span><strong>Реквизиты</strong><small>ИНН {LEGAL_DETAILS.taxId}</small></span></a></div></nav>
     <button className="assistant-status" onClick={onAssistant}><i/><div><b>AI-Ассистент</b><span>Открыть AI-чат</span></div></button>
     <div className="sidebar-account">
       <span className="avatar" style={{background:user.avatar_color}}>{user.name.slice(0,1)}</span>
