@@ -86,6 +86,8 @@ Seed идемпотентен: помеченные demo-записи синхр
 - API возвращает ISO 8601 со смещением;
 - «сегодня», приветствие, календарь, задачи, привычки и аналитика не зависят от timezone сервера.
 
+Frontend отправляет значение `datetime-local` как naive ISO datetime без промежуточного преобразования в UTC. Timezone-aware ISO datetime означает уже определённый абсолютный момент; backend не применяет к нему timezone профиля повторно.
+
 Миграция `20260728_0003` применяет следующее правило к legacy-данным:
 
 - `events.start_at/end_at` и `tasks.due_at/reminder_at` интерпретируются как локальное время владельца записи;
@@ -123,6 +125,27 @@ EMAIL_FROM=Axel One <noreply@example.com>
 Если SMTP использует логин, пароль обязателен. Не записывайте реальные одноразовые ссылки в production-логи.
 
 In-memory rate limiter рассчитан на один backend worker. При нескольких репликах добавьте общий limiter на ingress/Redis; Caddy или внешний WAF должен быть дополнительным, а не единственным уровнем защиты.
+
+## Повторяющиеся события и уведомления
+
+Календарь поддерживает `FREQ=DAILY`, `FREQ=WEEKLY` и недельные правила `BYDAY` (`MO,TU,...`). В базе хранится одна серия: occurrence вычисляются только в запрошенном диапазоне, сохраняют локальное время при DST и получают стабильный `occurrence_id`. Редактирование и удаление occurrence в текущем интерфейсе явно применяется ко всей серии. Календарь, dashboard, аналитика, overload, AI-контекст и дайджест используют один сервис разворачивания повторов.
+
+Напоминания событий и задач, а также ежедневный дайджест проходят через таблицу outbox `notification_deliveries`, добавленную миграцией `20260819_0004`. Уникальный `dedupe_key` не даёт повторно поставить одну доставку в очередь. Worker атомарно захватывает запись, восстанавливает зависшие claims, повторяет SMTP с экспоненциальной задержкой и после `NOTIFICATION_MAX_ATTEMPTS` переводит доставку в `failed`. Сообщение ошибки содержит только класс исключения. Пользователи без подтверждённого email и пользователи с отключёнными уведомлениями пропускаются.
+
+Worker встроен в FastAPI lifespan и по умолчанию отключён в development/test. В production Compose он включён. Основные параметры:
+
+```dotenv
+NOTIFICATION_WORKER_ENABLED=true
+NOTIFICATION_POLL_INTERVAL_SECONDS=30
+NOTIFICATION_SCHEDULE_HORIZON_HOURS=48
+NOTIFICATION_RETRY_BASE_SECONDS=60
+NOTIFICATION_RETRY_MAX_SECONDS=3600
+NOTIFICATION_MAX_ATTEMPTS=5
+NOTIFICATION_CLAIM_TIMEOUT_SECONDS=300
+NOTIFICATION_BATCH_SIZE=20
+```
+
+Несколько backend-процессов безопасно конкурируют за deliveries через условный атомарный `UPDATE`; генерация outbox защищена уникальным ключом. SMTP не поддерживает транзакционное exactly-once: аварийное завершение процесса после принятия письма SMTP, но до фиксации `sent`, теоретически может привести к повторной доставке после истечения claim timeout.
 
 ## Экспорт, удаление и privacy
 
@@ -169,6 +192,7 @@ USE_SECURE_AUTH_COOKIES=true
 EMAIL_BACKEND=smtp
 SMTP_HOST=smtp.example.com
 EMAIL_FROM=noreply@example.com
+NOTIFICATION_WORKER_ENABLED=true
 ```
 
 Если используется GigaChat:
@@ -179,7 +203,7 @@ LLM_MODEL=GigaChat-2
 GIGACHAT_AUTHORIZATION_KEY=<секрет>
 ```
 
-Startup-валидация блокирует production с дефолтным/коротким `SECRET_KEY`, SQLite, стандартным паролем PostgreSQL, localhost/wildcard CORS, demo seed, console email или небезопасными refresh cookies.
+Startup-валидация блокирует production с дефолтным/коротким `SECRET_KEY`, SQLite, стандартным паролем PostgreSQL, localhost/wildcard CORS, demo seed, console email, отключённым notification worker или небезопасными refresh cookies.
 
 ### 3. Запуск
 
@@ -223,7 +247,7 @@ npm test
 npm run build
 ```
 
-Тесты покрывают auth, ротацию/reuse refresh-токенов, rate limiting, одноразовые email-токены, отзыв сессий, UTC/DST, пользовательские границы дня, idempotent seed, экспорт/удаление, GigaChat consent, production validation и мобильную CSS-регрессию.
+Тесты покрывают auth, ротацию/reuse refresh-токенов, single-flight refresh во frontend, rate limiting, одноразовые email-токены, UTC/DST и локальные календарные даты, recurrence, outbox/retry/digest, экспорт/удаление, GigaChat consent и SSE, production validation, темы и мобильный календарь.
 
 ## Основные API-маршруты
 
@@ -234,6 +258,7 @@ npm run build
 | Account | `GET /account/export`, `DELETE /account` |
 | Consent | `GET/POST/DELETE /settings/ai-consent` |
 | Calendar/tasks | `/events`, `/tasks` |
+| Notifications | `GET /notifications`, `POST /notifications/{id}/read` |
 | Goals/habits | `/goals`, `/habits` |
 | Analytics | `/dashboard`, `/analytics`, `/energy`, `/balance`, `/overload` |
 | AI | `/ai/status`, `/ai/chat`, `/ai/conversations` |

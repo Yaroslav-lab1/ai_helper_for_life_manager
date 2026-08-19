@@ -1,104 +1,30 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Activity, AlertTriangle, ArrowRight, BarChart3, Bell, Brain, CalendarDays, Check, CheckCircle2,
+  Activity, AlertTriangle, ArrowRight, BarChart3, Brain, CalendarDays, Check, CheckCircle2,
   CheckSquare2, ChevronDown, Circle, Clock3, Flame, Goal as GoalIcon, HeartPulse, ListFilter,
   Download, Moon, MoreHorizontal, Plus, RefreshCw, Settings2, ShieldCheck, Sparkles, Sun, Target, Trash2, TrendingUp, UserX, X,
 } from 'lucide-react'
 import { api, downloadAccountExport, session } from '../lib/api'
-import type { Page } from '../App'
-import type { AIConsent, Analytics, Balance, Dashboard, EventItem, Goal, GoalPlan, GoalPlanPayload, Habit, Recommendation, Settings, Task, User } from '../types'
+import { calendarDateInTimeZone, dateTimeLocalValue, naiveDateTimeFromInput } from '../lib/datetime'
+import type { ThemePreference } from '../lib/theme'
+import type { AIConsent, Analytics, Balance, Goal, GoalPlan, GoalPlanPayload, Habit, Recommendation, Settings, Task, User } from '../types'
 import { Empty, Loading, Modal, PageHeader } from './UI'
 import { PrivacyPolicy } from './PrivacyPolicy'
 
 const ruDate = (value?:string, withTime=false) => value ? new Intl.DateTimeFormat('ru-RU', withTime?{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}:{day:'numeric',month:'short'}).format(new Date(value)) : 'Без срока'
-const time = (value:string) => new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(new Date(value))
-const toLocalInput = (date=new Date()) => { const d=new Date(date.getTime()-date.getTimezoneOffset()*60000); return d.toISOString().slice(0,16) }
-const todayIso = () => new Date().toISOString().slice(0,10)
 const priorityLabel:Record<string,string>={urgent:'Срочно',high:'Важно',medium:'Обычно',low:'Низкий'}
-
-export function DashboardPage({navigate,onChanged}:{navigate:(page:Page)=>void;onChanged:()=>void}) {
-  const [data,setData]=useState<Dashboard|null>(null)
-  const [quick,setQuick]=useState(false)
-  const [error,setError]=useState('')
-  const load=()=>api<Dashboard>('/dashboard').then(setData).catch(e=>setError(e.message))
-  useEffect(()=>{void load()},[])
-  const completeTask=async(id:number)=>{await api(`/tasks/${id}`,{method:'PATCH',body:JSON.stringify({status:'done'})});load();onChanged()}
-  const toggleHabit=async(habit:Habit)=>{
-    if(habit.completed_today) await api(`/habits/${habit.id}/checkins/${todayIso()}`,{method:'DELETE'})
-    else await api(`/habits/${habit.id}/checkins`,{method:'POST',body:JSON.stringify({checkin_date:todayIso()})})
-    load();onChanged()
-  }
-  if(!data&&!error)return <Loading/>
-  if(error)return <div className="error-state"><AlertTriangle/><h3>Не удалось загрузить день</h3><p>{error}</p><button onClick={load}>Повторить</button></div>
-  if(!data)return null
-  return <div className="page dashboard-page">
-    <PageHeader eyebrow={data.date_label} title={data.greeting} description="Вот как выглядит ваш день. Сфокусируемся на действительно важном." action={<button className="primary" onClick={()=>setQuick(true)}><Plus size={18}/> Быстрая задача</button>}/>
-    <section className="metrics-row">
-      <div className="focus-card"><div className="focus-ring" style={{'--score':`${data.focus_score*3.6}deg`} as React.CSSProperties}><span><b>{data.focus_score}</b><small>фокус</small></span></div><div><span className="metric-label">Индекс дня</span><h3>{data.focus_score>75?'Устойчивый темп':'Берегите ресурс'}</h3><p>{data.overload.level==='high'?'План плотный — оставьте буфер.':'Есть место для главного без спешки.'}</p></div></div>
-      <Metric icon={CheckSquare2} color="violet" value={data.tasks_due} label="Задач к сроку" note={`${data.completed_today} уже готово`}/>
-      <Metric icon={Flame} color="orange" value={`${Math.round(data.habit_rate)}%`} label="Привычки сегодня" note={data.habit_rate>=70?'Отличный ритм':'Начните с малого'}/>
-      <Metric icon={Clock3} color="blue" value={`${Math.round(data.overload.scheduled_minutes/60)} ч`} label="В календаре" note={`${data.events_today.length} событий`}/>
-    </section>
-    {data.overload.level==='high'&&<section className="overload-banner"><span><AlertTriangle/></span><div><b>Сегодня высокая плотность</b><p>{data.overload.suggestion}</p></div><button onClick={()=>navigate('tasks')}>Разгрузить день <ArrowRight/></button></section>}
-    <div className="dashboard-grid">
-      <section className="card agenda-card">
-        <CardHead icon={CalendarDays} title="Расписание" subtitle="Сегодня" action={<button onClick={()=>navigate('calendar')}>Весь календарь <ArrowRight/></button>}/>
-        <div className="agenda-list">
-          {data.events_today.length?data.events_today.map((event,index)=><div className="agenda-item" key={event.id}>
-            <div className="agenda-time"><b>{time(event.start_at)}</b><span>{time(event.end_at)}</span></div><i style={{background:event.color}}/>
-            <div><b>{event.title}</b><span>{event.location||event.category}</span></div>{index===0&&<em>следующее</em>}
-          </div>):<Empty icon={CalendarDays} title="Свободный день" text="В календаре пока нет событий."/>}
-        </div>
-      </section>
-      <section className="card tasks-card">
-        <CardHead icon={CheckSquare2} title="Главное сегодня" subtitle={`${data.priority_tasks.length} в фокусе`} action={<button onClick={()=>navigate('tasks')}>Все задачи <ArrowRight/></button>}/>
-        <div className="compact-tasks">{data.priority_tasks.length?data.priority_tasks.map(task=><div className="compact-task" key={task.id}><button className="task-check" onClick={()=>completeTask(task.id)}><Circle/></button><div><b>{task.title}</b><span>{task.project||'Личное'} · {task.estimate_minutes} мин</span></div><em className={`priority ${task.priority}`}>{priorityLabel[task.priority]}</em></div>):<Empty icon={CheckCircle2} title="Всё готово" text="На сегодня нет открытых задач."/>}</div>
-      </section>
-      <section className="card goals-card">
-        <CardHead icon={Target} title="Движение к целям" subtitle="Активные" action={<button onClick={()=>navigate('goals')}>Все цели <ArrowRight/></button>}/>
-        <div className="goal-compact-list">{data.goals.map((goal,index)=><div key={goal.id}><div className="goal-mini-head"><span className={`goal-index g${index}`}>{index+1}</span><div><b>{goal.title}</b><small>{goal.target_date?`до ${ruDate(goal.target_date)}`:'Долгосрочная'}</small></div><strong>{goal.progress}%</strong></div><div className="progress"><i style={{width:`${goal.progress}%`}}/></div></div>)}</div>
-      </section>
-      <section className="card habits-card">
-        <CardHead icon={Flame} title="Ритм дня" subtitle="Привычки" action={<button onClick={()=>navigate('habits')}>Подробнее <ArrowRight/></button>}/>
-        <div className="habit-compact-list">{data.habits.map(habit=><button key={habit.id} className={habit.completed_today?'done':''} onClick={()=>toggleHabit(habit)}><span style={{background:`${habit.color}18`}}>{habit.emoji}</span><div><b>{habit.title}</b><small>{habit.current_streak?`${habit.current_streak} дней подряд`:'Начать серию'}</small></div><i>{habit.completed_today?<Check/>:<Plus/>}</i></button>)}</div>
-      </section>
-    </div>
-    {data.recommendation&&<section className="recommendation-card"><span className="ai-orb"><Sparkles/></span><div><small>Рекомендация Axel AI</small><h3>{data.recommendation.title}</h3><p>{data.recommendation.body}</p></div><button onClick={()=>navigate('analytics')}>{data.recommendation.action||'Посмотреть'} <ArrowRight/></button></section>}
-    {quick&&<TaskModal onClose={()=>setQuick(false)} onSaved={()=>{setQuick(false);load();onChanged()}}/>}
-  </div>
-}
 
 function Metric({icon:Icon,color,value,label,note}:{icon:typeof Activity;color:string;value:string|number;label:string;note:string}){return <div className="metric-card"><span className={`metric-icon ${color}`}><Icon/></span><div><b>{value}</b><span>{label}</span><small>{note}</small></div></div>}
 function CardHead({icon:Icon,title,subtitle,action}:{icon:typeof Activity;title:string;subtitle:string;action?:React.ReactNode}){return <div className="card-head"><div><span><Icon/></span><div><h3>{title}</h3><small>{subtitle}</small></div></div>{action}</div>}
 
-function TaskModal({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}){
-  const [form,setForm]=useState({title:'',due_at:toLocalInput(),priority:'medium',estimate_minutes:30,energy:'medium',project:''})
+function TaskModal({timezone,onClose,onSaved}:{timezone:string;onClose:()=>void;onSaved:()=>void}){
+  const [form,setForm]=useState({title:'',due_at:dateTimeLocalValue(new Date(),timezone),reminder_at:'',priority:'medium',estimate_minutes:30,energy:'medium',project:''})
   const [saving,setSaving]=useState(false);const [error,setError]=useState('')
-  const submit=async(e:React.FormEvent)=>{e.preventDefault();setSaving(true);setError('');try{await api('/tasks',{method:'POST',body:JSON.stringify({...form,due_at:new Date(form.due_at).toISOString().slice(0,19)})});onSaved()}catch(err){setError(err instanceof Error?err.message:'Ошибка')}finally{setSaving(false)}}
-  return <Modal title="Новая задача" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="full">Что нужно сделать?<input autoFocus required value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Например, подготовить презентацию"/></label><label>Срок<input type="datetime-local" value={form.due_at} onChange={e=>setForm({...form,due_at:e.target.value})}/></label><label>Приоритет<select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})}><option value="low">Низкий</option><option value="medium">Обычный</option><option value="high">Важный</option><option value="urgent">Срочный</option></select></label><label>Оценка, минут<input type="number" min="5" max="1440" value={form.estimate_minutes} onChange={e=>setForm({...form,estimate_minutes:+e.target.value})}/></label><label>Проект<input value={form.project} onChange={e=>setForm({...form,project:e.target.value})} placeholder="Личное"/></label>{error&&<div className="form-error full">{error}</div>}<div className="modal-actions full"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary" disabled={saving}>{saving?'Сохраняем…':'Создать задачу'}</button></div></form></Modal>
+  const submit=async(e:React.FormEvent)=>{e.preventDefault();setSaving(true);setError('');try{await api('/tasks',{method:'POST',body:JSON.stringify({...form,due_at:naiveDateTimeFromInput(form.due_at),reminder_at:form.reminder_at?naiveDateTimeFromInput(form.reminder_at):null})});onSaved()}catch(err){setError(err instanceof Error?err.message:'Ошибка')}finally{setSaving(false)}}
+  return <Modal title="Новая задача" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="full">Что нужно сделать?<input autoFocus required value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Например, подготовить презентацию"/></label><label>Срок<input type="datetime-local" value={form.due_at} onChange={e=>setForm({...form,due_at:e.target.value})}/></label><label>Напомнить<input type="datetime-local" value={form.reminder_at} onChange={e=>setForm({...form,reminder_at:e.target.value})}/></label><label>Приоритет<select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})}><option value="low">Низкий</option><option value="medium">Обычный</option><option value="high">Важный</option><option value="urgent">Срочный</option></select></label><label>Оценка, минут<input type="number" min="5" max="1440" value={form.estimate_minutes} onChange={e=>setForm({...form,estimate_minutes:+e.target.value})}/></label><label>Проект<input value={form.project} onChange={e=>setForm({...form,project:e.target.value})} placeholder="Личное"/></label>{error&&<div className="form-error full">{error}</div>}<div className="modal-actions full"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary" disabled={saving}>{saving?'Сохраняем…':'Создать задачу'}</button></div></form></Modal>
 }
 
-export function CalendarPage({onChanged}:{onChanged:()=>void}){
-  const [events,setEvents]=useState<EventItem[]|null>(null);const [modal,setModal]=useState(false)
-  const load=()=>api<EventItem[]>('/events').then(setEvents);useEffect(()=>{void load()},[])
-  const remove=async(id:number)=>{if(!confirm('Удалить событие?'))return;await api(`/events/${id}`,{method:'DELETE'});load();onChanged()}
-  if(!events)return <Loading/>
-  const groups=events.reduce<Record<string,EventItem[]>>((acc,item)=>{const key=new Date(item.start_at).toISOString().slice(0,10);(acc[key]??=[]).push(item);return acc},{})
-  return <div className="page"><PageHeader eyebrow="Время и пространство" title="Календарь" description="Смотрите на неделю целиком и оставляйте место между обязательствами." action={<button className="primary" onClick={()=>setModal(true)}><Plus/> Событие</button>}/>
-    <div className="calendar-summary"><div><CalendarDays/><span><b>{events.length}</b> событий в плане</span></div><p>Повторяющиеся события и напоминания сохраняются вместе с календарём.</p></div>
-    <section className="card calendar-list">{Object.keys(groups).length?Object.entries(groups).map(([day,items])=><div className="calendar-day" key={day}><div className="date-badge"><b>{new Date(`${day}T12:00`).getDate()}</b><span>{new Intl.DateTimeFormat('ru-RU',{month:'short',weekday:'short'}).format(new Date(`${day}T12:00`))}</span></div><div className="day-events">{items.map(item=><div className="calendar-event" key={item.id} style={{'--event':item.color} as React.CSSProperties}><i/><div className="event-clock"><b>{time(item.start_at)}</b><span>{time(item.end_at)}</span></div><div className="event-copy"><b>{item.title}</b><span>{item.location||item.category}{item.recurrence_rule?' · повторяется':''}</span></div><button className="icon-btn danger" onClick={()=>remove(item.id)}><Trash2/></button></div>)}</div></div>):<Empty icon={CalendarDays} title="Календарь свободен" text="Добавьте первое событие или фокус-блок."/>}</section>
-    {modal&&<EventModal onClose={()=>setModal(false)} onSaved={()=>{setModal(false);load();onChanged()}}/>}
-  </div>
-}
-
-function EventModal({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}){
-  const start=new Date();start.setMinutes(0,0,0);start.setHours(start.getHours()+1);const end=new Date(start);end.setHours(end.getHours()+1)
-  const [form,setForm]=useState({title:'',start_at:toLocalInput(start),end_at:toLocalInput(end),category:'personal',location:'',color:'#7857FF',reminder_minutes:10,recurrence_rule:''});const [error,setError]=useState('')
-  const submit=async(e:React.FormEvent)=>{e.preventDefault();setError('');try{await api('/events',{method:'POST',body:JSON.stringify({...form,start_at:new Date(form.start_at).toISOString().slice(0,19),end_at:new Date(form.end_at).toISOString().slice(0,19),recurrence_rule:form.recurrence_rule||null})});onSaved()}catch(err){setError(err instanceof Error?err.message:'Ошибка')}}
-  return <Modal title="Новое событие" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="full">Название<input required autoFocus value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Что запланировано?"/></label><label>Начало<input type="datetime-local" value={form.start_at} onChange={e=>setForm({...form,start_at:e.target.value})}/></label><label>Окончание<input type="datetime-local" value={form.end_at} onChange={e=>setForm({...form,end_at:e.target.value})}/></label><label>Категория<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}><option value="personal">Личное</option><option value="work">Работа</option><option value="focus">Фокус</option><option value="health">Здоровье</option></select></label><label>Место<input value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Необязательно"/></label><label>Повтор<select value={form.recurrence_rule} onChange={e=>setForm({...form,recurrence_rule:e.target.value})}><option value="">Не повторять</option><option value="FREQ=DAILY">Каждый день</option><option value="FREQ=WEEKLY">Каждую неделю</option></select></label><label>Напомнить<select value={form.reminder_minutes} onChange={e=>setForm({...form,reminder_minutes:+e.target.value})}><option value="0">В момент события</option><option value="10">За 10 минут</option><option value="30">За 30 минут</option><option value="60">За час</option></select></label>{error&&<div className="form-error full">{error}</div>}<div className="modal-actions full"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary">Добавить</button></div></form></Modal>
-}
-
-export function TasksPage({onChanged}:{onChanged:()=>void}){
+export function TasksPage({timezone,onChanged}:{timezone:string;onChanged:()=>void}){
   const [tasks,setTasks]=useState<Task[]|null>(null);const [filter,setFilter]=useState('open');const [modal,setModal]=useState(false)
   const load=()=>api<Task[]>('/tasks').then(setTasks);useEffect(()=>{void load()},[])
   const visible=useMemo(()=>tasks?.filter(t=>filter==='all'||filter==='done'?t.status===filter:t.status!=='done'&&t.status!=='cancelled'),[tasks,filter])
@@ -108,11 +34,11 @@ export function TasksPage({onChanged}:{onChanged:()=>void}){
   return <div className="page"><PageHeader eyebrow="Ясные следующие шаги" title="Задачи" description="Соберите обязательства в одном месте и выбирайте по важности и ресурсу." action={<button className="primary" onClick={()=>setModal(true)}><Plus/> Новая задача</button>}/>
     <div className="task-toolbar"><div><ListFilter/><button className={filter==='open'?'active':''} onClick={()=>setFilter('open')}>Открытые <span>{tasks.filter(t=>t.status!=='done'&&t.status!=='cancelled').length}</span></button><button className={filter==='done'?'active':''} onClick={()=>setFilter('done')}>Готово</button><button className={filter==='all'?'active':''} onClick={()=>setFilter('all')}>Все</button></div><span>{tasks.filter(t=>t.status==='done').length} завершено</span></div>
     <section className="card task-list">{visible?.length?visible.map(task=><article className={`task-row ${task.status==='done'?'done':''}`} key={task.id}><button className="big-check" onClick={()=>update(task,task.status==='done'?'todo':'done')}>{task.status==='done'?<Check/>:<Circle/>}</button><div className="task-main"><b>{task.title}</b><span>{task.project||'Без проекта'} · {task.estimate_minutes} мин · энергия: {task.energy}</span></div><div className="task-meta"><em className={`priority ${task.priority}`}>{priorityLabel[task.priority]}</em><span><Clock3/>{ruDate(task.due_at,true)}</span></div><button className="icon-btn danger" onClick={()=>remove(task.id)}><Trash2/></button></article>):<Empty icon={CheckCircle2} title={filter==='done'?'Пока нет завершённых':'Список чист'} text={filter==='done'?'Завершённые задачи появятся здесь.':'Можно выбрать одну важную задачу и начать с неё.'}/>}</section>
-    {modal&&<TaskModal onClose={()=>setModal(false)} onSaved={()=>{setModal(false);load();onChanged()}}/>}
+    {modal&&<TaskModal timezone={timezone} onClose={()=>setModal(false)} onSaved={()=>{setModal(false);load();onChanged()}}/>}
   </div>
 }
 
-export function GoalsPage({onChanged}:{onChanged:()=>void}){
+export function GoalsPage({timezone,onChanged}:{timezone:string;onChanged:()=>void}){
   const [goals,setGoals]=useState<Goal[]|null>(null);const [plans,setPlans]=useState<Record<number,GoalPlan|null>>({});const [modal,setModal]=useState(false);const [working,setWorking]=useState<number|null>(null);const [preview,setPreview]=useState<{goal:Goal;plan:GoalPlan}|null>(null);const [consentRequest,setConsentRequest]=useState<{goal:Goal;regenerate:boolean;consent:AIConsent}|null>(null);const [error,setError]=useState('')
   const load=async()=>{const items=await api<Goal[]>('/goals');setGoals(items);const rows=await Promise.all(items.map(async goal=>[goal.id,await api<GoalPlan>(`/goals/${goal.id}/plan`).catch(()=>null)] as const));setPlans(Object.fromEntries(rows))}
   useEffect(()=>{void load()},[])
@@ -130,7 +56,7 @@ export function GoalsPage({onChanged}:{onChanged:()=>void}){
       {working===goal.id?<div className="goal-ai-loading"><i/><b>AI составляет план</b><span>Учитываю срок, расписание, привычки и текущую нагрузку…</span></div>:plan&&plan.status!=='cancelled'?<GoalAIPlan plan={plan} onApply={()=>setPreview({goal,plan})} onEdit={()=>void editPlan(goal,plan)} onRegenerate={()=>void generate(goal,true)} onDiscuss={()=>window.dispatchEvent(new Event('axel:open-ai'))} onCancel={()=>void cancelPlan(goal)}/>:<div className="goal-ai-empty"><Sparkles/><div><b>{plan?.status==='cancelled'?'Черновик отменён':'AI-план пока не создан'}</b><p>Запустите составление, когда AI-провайдер доступен.</p></div><button onClick={()=>void generate(goal,Boolean(plan))}><Sparkles/> Составить план</button></div>}
       {goal.steps.length>0&&<div className="goal-steps"><div className="steps-head"><b>Применённые этапы</b></div>{goal.steps.map(step=><button className={step.is_completed?'complete':''} key={step.id} onClick={()=>toggleStep(goal,step.id,!step.is_completed)}><i>{step.is_completed?<Check/>:<Circle/>}</i><span>{step.title}<small>{step.due_date?`до ${ruDate(step.due_date)}`:'без срока'}</small></span></button>)}</div>}
     </article>}):<div className="card"><Empty icon={Target} title="Добавьте первую цель" text="Сформулируйте желаемый результат — черновик плана составит Axel AI."/></div>}</div>
-    {modal&&<GoalModal onClose={()=>setModal(false)} onSaved={()=>{setModal(false);load();onChanged()}}/>}
+    {modal&&<GoalModal timezone={timezone} onClose={()=>setModal(false)} onSaved={()=>{setModal(false);load();onChanged()}}/>}
     {preview&&<PlanApplyModal goal={preview.goal} plan={preview.plan} onClose={()=>setPreview(null)} onApplied={()=>{setPreview(null);void load();onChanged()}}/>}
     {consentRequest&&<GoalAIConsentModal consent={consentRequest.consent} onClose={()=>setConsentRequest(null)} onAccept={acceptConsentAndGenerate}/>}
   </div>
@@ -167,17 +93,17 @@ function PlanApplyModal({goal,plan,onClose,onApplied}:{goal:Goal;plan:GoalPlan;o
   return <Modal title="Предпросмотр изменений" onClose={onClose}><div className="plan-preview"><p>Axel One создаст только отмеченные сущности. Старый план и существующие данные не удаляются.</p>{planGroups.map(([key,label])=><section key={key}><b>{label}</b>{plan.plan[key].map((item,index)=><label key={index}><input type="checkbox" checked={selected[key].includes(index)} onChange={()=>toggle(key,index)}/><span>{itemTitle(item)}</span></label>)}</section>)}{error&&<div className="form-error">{error}</div>}<div className="modal-actions"><button className="secondary" onClick={onClose}>Отменить</button><button className="primary" disabled={saving||!Object.values(selected).some(items=>items.length)} onClick={()=>void apply()}>{saving?'Применяю…':'Подтвердить применение'}</button></div></div></Modal>
 }
 
-function GoalModal({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}){
+function GoalModal({timezone,onClose,onSaved}:{timezone:string;onClose:()=>void;onSaved:()=>void}){
   const target=new Date();target.setMonth(target.getMonth()+3)
-  const [form,setForm]=useState({title:'',description:'',horizon:'quarter',target_date:target.toISOString().slice(0,10)});const [error,setError]=useState('')
+  const [form,setForm]=useState({title:'',description:'',horizon:'quarter',target_date:calendarDateInTimeZone(timezone,target)});const [error,setError]=useState('')
   const submit=async(e:React.FormEvent)=>{e.preventDefault();try{await api<Goal>('/goals',{method:'POST',body:JSON.stringify(form)});onSaved()}catch(err){setError(err instanceof Error?err.message:'Ошибка')}}
   return <Modal title="Новая цель" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="full">Результат<input autoFocus required value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Чего вы хотите достичь?"/></label><label className="full">Почему это важно<textarea rows={3} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Контекст поможет сделать план точнее"/></label><label>Горизонт<select value={form.horizon} onChange={e=>setForm({...form,horizon:e.target.value})}><option value="month">Месяц</option><option value="quarter">Квартал</option><option value="year">Год</option><option value="long_term">Долгосрочно</option></select></label><label>Целевая дата<input type="date" value={form.target_date} onChange={e=>setForm({...form,target_date:e.target.value})}/></label><div className="goal-auto-note full"><Sparkles/> Axel AI может автоматически подготовить черновик плана. Для GigaChat приложение сначала запросит согласие; изменения применятся только после вашего подтверждения.</div>{error&&<div className="form-error full">{error}</div>}<div className="modal-actions full"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary"><Sparkles/> Создать цель</button></div></form></Modal>
 }
 
-export function HabitsPage({onChanged}:{onChanged:()=>void}){
+export function HabitsPage({timezone,onChanged}:{timezone:string;onChanged:()=>void}){
   const [habits,setHabits]=useState<Habit[]|null>(null);const [modal,setModal]=useState(false)
   const load=()=>api<Habit[]>('/habits').then(setHabits);useEffect(()=>{void load()},[])
-  const toggle=async(item:Habit)=>{if(item.completed_today)await api(`/habits/${item.id}/checkins/${todayIso()}`,{method:'DELETE'});else await api(`/habits/${item.id}/checkins`,{method:'POST',body:JSON.stringify({checkin_date:todayIso()})});load();onChanged()}
+  const toggle=async(item:Habit)=>{const today=calendarDateInTimeZone(timezone);if(item.completed_today)await api(`/habits/${item.id}/checkins/${today}`,{method:'DELETE'});else await api(`/habits/${item.id}/checkins`,{method:'POST',body:JSON.stringify({checkin_date:today})});load();onChanged()}
   const archive=async(id:number)=>{await api(`/habits/${id}`,{method:'PATCH',body:JSON.stringify({archived:true})});load();onChanged()}
   if(!habits)return <Loading/>
   const completed=habits.filter(h=>h.completed_today).length
@@ -196,7 +122,7 @@ function HabitModal({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}){
 
 const balanceLabels:Record<string,string>={health:'Здоровье',career:'Карьера',finance:'Финансы',relationships:'Отношения',growth:'Развитие',recreation:'Отдых',environment:'Окружение',contribution:'Вклад'}
 
-export function AnalyticsPage(){
+export function AnalyticsPage({timezone}:{timezone:string}){
   const [analytics,setAnalytics]=useState<Analytics|null>(null);const [balance,setBalance]=useState<Balance[]>([]);const [recs,setRecs]=useState<Recommendation[]>([]);const [assessment,setAssessment]=useState(false)
   const load=()=>Promise.all([api<Analytics>('/analytics?days=30'),api<Balance[]>('/balance'),api<Recommendation[]>('/recommendations')]).then(([a,b,r])=>{setAnalytics(a);setBalance(b);setRecs(r)})
   useEffect(()=>{void load()},[])
@@ -209,17 +135,17 @@ export function AnalyticsPage(){
       <section className="card balance-card"><CardHead icon={HeartPulse} title="Колесо баланса" subtitle={latest?`Оценка ${ruDate(latest.assessment_date)}`:'Нет оценки'}/>{latest?<div className="balance-bars">{Object.entries(balanceLabels).map(([key,label])=><div key={key}><span>{label}</span><div><i style={{width:`${(latest as unknown as Record<string,number>)[key]*10}%`}}/></div><b>{(latest as unknown as Record<string,number>)[key]}</b></div>)}</div>:<Empty icon={HeartPulse} title="Добавьте оценку" text="Восемь быстрых вопросов покажут, где сейчас нужен ресурс."/>}</section>
     </div>
     <section className="card recommendations"><div className="recommendation-head"><div><span className="ai-orb"><Sparkles/></span><div><h3>Персональные рекомендации</h3><p>Сформированы по вашему реальному плану и прогрессу.</p></div></div><button className="secondary" onClick={generate}><RefreshCw/> Обновить</button></div><div className="recommendation-grid">{recs.filter(r=>r.status==='new').slice(0,3).map(item=><article key={item.id}><span>{item.kind==='overload'?<AlertTriangle/>:item.kind==='habits'?<Flame/>:<Sparkles/>}</span><small>{item.kind}</small><h4>{item.title}</h4><p>{item.body}</p><button onClick={async()=>{await api(`/recommendations/${item.id}`,{method:'PATCH',body:JSON.stringify({status:'done'})});load()}}>{item.action||'Принять'} <ArrowRight/></button></article>)}</div></section>
-    {assessment&&<BalanceModal onClose={()=>setAssessment(false)} onSaved={()=>{setAssessment(false);load()}}/>}
+    {assessment&&<BalanceModal timezone={timezone} onClose={()=>setAssessment(false)} onSaved={()=>{setAssessment(false);load()}}/>}
   </div>
 }
 
-function BalanceModal({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}){
+function BalanceModal({timezone,onClose,onSaved}:{timezone:string;onClose:()=>void;onSaved:()=>void}){
   const [values,setValues]=useState<Record<string,number>>(Object.fromEntries(Object.keys(balanceLabels).map(key=>[key,7])))
-  const submit=async(e:React.FormEvent)=>{e.preventDefault();await api('/balance',{method:'POST',body:JSON.stringify({...values,assessment_date:todayIso()})});onSaved()}
+  const submit=async(e:React.FormEvent)=>{e.preventDefault();await api('/balance',{method:'POST',body:JSON.stringify({...values,assessment_date:calendarDateInTimeZone(timezone)})});onSaved()}
   return <Modal title="Колесо жизненного баланса" onClose={onClose}><form className="balance-form" onSubmit={submit}><p>Оцените, насколько вы довольны каждой сферой прямо сейчас.</p>{Object.entries(balanceLabels).map(([key,label])=><label key={key}><span>{label}</span><input type="range" min="1" max="10" value={values[key]} onChange={e=>setValues({...values,[key]:+e.target.value})}/><b>{values[key]}</b></label>)}<div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary">Сохранить оценку</button></div></form></Modal>
 }
 
-export function SettingsPage({user,onUser}:{user:User;onUser:(user:User)=>void}){
+export function SettingsPage({user,onUser,onTheme}:{user:User;onUser:(user:User)=>void;onTheme:(theme:ThemePreference)=>void}){
   const [settings,setSettings]=useState<Settings|null>(null)
   const [consent,setConsent]=useState<AIConsent|null>(null)
   const [profile,setProfile]=useState({name:user.name,occupation:user.occupation||'',timezone:user.timezone})
@@ -230,7 +156,7 @@ export function SettingsPage({user,onUser}:{user:User;onUser:(user:User)=>void})
   const [deleteForm,setDeleteForm]=useState({password:'',confirmation:''})
   useEffect(()=>{void Promise.all([api<Settings>('/settings').then(setSettings),api<AIConsent>('/settings/ai-consent').then(setConsent)])},[])
   if(!settings||!consent)return <Loading/>
-  const save=async(e:React.FormEvent)=>{e.preventDefault();const [updated]=await Promise.all([api<User>('/auth/me',{method:'PATCH',body:JSON.stringify(profile)}),api<Settings>('/settings',{method:'PATCH',body:JSON.stringify(settings)})]);onUser(updated);localStorage.setItem('axel_theme',settings.theme);setSaved(true);setTimeout(()=>setSaved(false),1800)}
+  const save=async(e:React.FormEvent)=>{e.preventDefault();const [updated,updatedSettings]=await Promise.all([api<User>('/auth/me',{method:'PATCH',body:JSON.stringify(profile)}),api<Settings>('/settings',{method:'PATCH',body:JSON.stringify(settings)})]);onUser(updated);onTheme(updatedSettings.theme as ThemePreference);setSaved(true);setTimeout(()=>setSaved(false),1800)}
   const acceptConsent=async()=>{if(!consentChecked)return;setConsent(await api<AIConsent>('/settings/ai-consent',{method:'POST',body:JSON.stringify({accepted:true,policy_version:consent.policy_version})}));setConsentChecked(false)}
   const revokeConsent=async()=>setConsent(await api<AIConsent>('/settings/ai-consent',{method:'DELETE'}))
   const verifyEmail=async()=>{const result=await api<{message:string}>('/auth/request-email-verification',{method:'POST'});setAccountMessage(result.message)}
@@ -239,7 +165,7 @@ export function SettingsPage({user,onUser}:{user:User;onUser:(user:User)=>void})
   return <div className="page"><PageHeader eyebrow="Ваше пространство" title="Профиль и настройки" description="Настройте Axel One под свой ритм, рабочие часы и стиль рекомендаций."/>
     <form className="settings-layout" onSubmit={save}><section className="card settings-section"><div className="settings-title"><span><Settings2/></span><div><h3>Профиль</h3><p>Эти данные используются в приветствии и рекомендациях.</p></div></div><div className="settings-fields"><label>Имя<input value={profile.name} onChange={e=>setProfile({...profile,name:e.target.value})}/></label><label>Роль или занятие<input value={profile.occupation} onChange={e=>setProfile({...profile,occupation:e.target.value})}/></label><label className="full">Часовой пояс<input value={profile.timezone} onChange={e=>setProfile({...profile,timezone:e.target.value})}/></label></div></section>
       <section className="card settings-section"><div className="settings-title"><span><Clock3/></span><div><h3>Ритм работы</h3><p>Границы помогают точнее замечать перегрузку.</p></div></div><div className="settings-fields"><label>Начало дня<input type="time" value={settings.workday_start} onChange={e=>setSettings({...settings,workday_start:e.target.value})}/></label><label>Конец дня<input type="time" value={settings.workday_end} onChange={e=>setSettings({...settings,workday_end:e.target.value})}/></label><label>Фокус-часов в неделю<input type="number" min="1" max="80" value={settings.weekly_focus_hours} onChange={e=>setSettings({...settings,weekly_focus_hours:+e.target.value})}/></label><label>Ежедневный обзор<input type="time" value={settings.daily_digest_time} onChange={e=>setSettings({...settings,daily_digest_time:e.target.value})}/></label></div></section>
-      <section className="card settings-section"><div className="settings-title"><span><Sparkles/></span><div><h3>Интерфейс и AI</h3><p>Выберите комфортный тон и визуальный режим.</p></div></div><div className="theme-options">{[{id:'system',icon:Settings2,label:'Системная'},{id:'light',icon:Sun,label:'Светлая'},{id:'dark',icon:Moon,label:'Тёмная'}].map(item=><button type="button" key={item.id} className={settings.theme===item.id?'active':''} onClick={()=>setSettings({...settings,theme:item.id})}><item.icon/><span>{item.label}</span>{settings.theme===item.id&&<Check/>}</button>)}</div><div className="settings-fields"><label>Тон помощника<select value={settings.ai_tone} onChange={e=>setSettings({...settings,ai_tone:e.target.value})}><option value="supportive">Поддерживающий</option><option value="direct">Прямой</option><option value="coach">Коуч</option></select></label><label className="toggle-label"><span><b>Уведомления</b><small>Напоминания и дневной обзор</small></span><input type="checkbox" checked={settings.notifications_enabled} onChange={e=>setSettings({...settings,notifications_enabled:e.target.checked})}/><i/></label></div></section>
+      <section className="card settings-section"><div className="settings-title"><span><Sparkles/></span><div><h3>Интерфейс и AI</h3><p>Выберите комфортный тон и визуальный режим.</p></div></div><div className="theme-options">{([{id:'dark',icon:Moon,label:'Тёмная'},{id:'system',icon:Settings2,label:'Системная'},{id:'light',icon:Sun,label:'Светлая'}] as const).map(item=><button type="button" key={item.id} className={settings.theme===item.id?'active':''} onClick={()=>{setSettings({...settings,theme:item.id});onTheme(item.id)}}><item.icon/><span>{item.label}</span>{settings.theme===item.id&&<Check/>}</button>)}</div><div className="settings-fields"><label>Тон помощника<select value={settings.ai_tone} onChange={e=>setSettings({...settings,ai_tone:e.target.value})}><option value="supportive">Поддерживающий</option><option value="direct">Прямой</option><option value="coach">Коуч</option></select></label><label className="toggle-label"><span><b>Уведомления</b><small>Напоминания и дневной обзор</small></span><input type="checkbox" checked={settings.notifications_enabled} onChange={e=>setSettings({...settings,notifications_enabled:e.target.checked})}/><i/></label></div></section>
       <section className="card settings-section consent-section"><div className="settings-title"><span><ShieldCheck/></span><div><h3>Передача контекста в GigaChat</h3><p>{consent.active?'Согласие действует. Вы можете отозвать его в любой момент.':'Без отдельного согласия сервер не отправляет персональный контекст в GigaChat.'}</p></div></div><div className="consent-copy"><p>При облачном AI передаются ваш вопрос и минимально необходимый контекст: события, задачи, цели, привычки, показатели нагрузки и рабочие настройки. Цель — сформировать персональный ответ.</p><button type="button" className="privacy-link inline" onClick={()=>setPrivacy(true)}>Прочитать политику конфиденциальности</button>{!consent.active?<><label className="consent-check"><input type="checkbox" checked={consentChecked} onChange={e=>setConsentChecked(e.target.checked)}/><span>Я ознакомился(ась) с политикой версии {consent.policy_version} и явно соглашаюсь на описанную передачу данных в GigaChat.</span></label><button type="button" className="secondary" disabled={!consentChecked} onClick={()=>void acceptConsent()}>Дать согласие</button></>:<button type="button" className="danger-button" onClick={()=>void revokeConsent()}>Отозвать согласие</button>}</div></section>
       <section className="card settings-section account-section"><div className="settings-title"><span><Download/></span><div><h3>Данные и аккаунт</h3><p>Экспортируйте данные или безвозвратно удалите аккаунт.</p></div></div><div className="account-tools">{!user.email_verified&&<div className="account-row"><div><b>Email не подтверждён</b><p>Подтверждение защищает восстановление доступа.</p></div><button type="button" className="secondary" onClick={()=>void verifyEmail()}>Отправить ссылку</button></div>}<div className="account-row"><div><b>Экспорт JSON</b><p>Профиль, календарь, задачи, цели, привычки, аналитика и AI-история.</p></div><button type="button" className="secondary" onClick={()=>void exportData()}><Download/> Скачать</button></div><div className="delete-account"><div><UserX/><span><b>Удалить аккаунт</b><small>Все сессии будут отозваны, связанные данные удалены.</small></span></div><div className="settings-fields"><label>Текущий пароль<input type="password" value={deleteForm.password} onChange={e=>setDeleteForm({...deleteForm,password:e.target.value})}/></label><label>Введите DELETE<input value={deleteForm.confirmation} onChange={e=>setDeleteForm({...deleteForm,confirmation:e.target.value})}/></label></div><button type="button" className="danger-button" disabled={!deleteForm.password||deleteForm.confirmation!=='DELETE'} onClick={()=>void deleteAccount()}><Trash2/> Удалить безвозвратно</button></div>{accountMessage&&<p className="account-message">{accountMessage}</p>}</div></section>
       <div className="settings-actions"><span>{saved?<><CheckCircle2/> Настройки сохранены</>:''}</span><button className="primary">Сохранить изменения</button></div>

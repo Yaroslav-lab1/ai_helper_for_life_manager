@@ -3,6 +3,13 @@ from datetime import date, datetime, timedelta
 from fastapi.testclient import TestClient
 
 
+def test_new_users_get_dark_theme_by_default(client: TestClient, auth: dict[str, str]):
+    response = client.get("/api/v1/settings", headers=auth)
+
+    assert response.status_code == 200
+    assert response.json()["theme"] == "dark"
+
+
 def test_tasks_events_and_dashboard(client: TestClient, auth: dict[str, str]):
     now = datetime.now().replace(microsecond=0)
     task = client.post("/api/v1/tasks", headers=auth, json={

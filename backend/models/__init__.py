@@ -13,6 +13,7 @@ from backend.models.entities import (
     Habit,
     HabitCheckin,
     OneTimeToken,
+    NotificationDelivery,
     Recommendation,
     Task,
     User,
@@ -39,5 +40,6 @@ __all__ = [
     "GoalPlanVersion",
     "AIActionProposal",
     "OneTimeToken",
+    "NotificationDelivery",
     "utcnow",
 ]

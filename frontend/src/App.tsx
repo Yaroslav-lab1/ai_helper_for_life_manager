@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BarChart3, CalendarDays, ChevronRight, Diamond, Goal, LayoutDashboard, Sparkles, Target } from 'lucide-react'
 import { api, session } from './lib/api'
-import type { CalendarView, Tokens, User } from './types'
+import type { CalendarView, Settings, Tokens, User } from './types'
 import { AnalyticsPage, GoalsPage, HabitsPage, SettingsPage, TasksPage } from './components/Pages'
 import PremiumDashboardPage from './components/PremiumDashboard'
 import PremiumCalendarPage from './components/PremiumCalendar'
@@ -9,6 +9,7 @@ import { AIAssistantPanel, AppHeader, Logo, MobileScrim, Sidebar } from './compo
 import { PrivacyPolicy } from './components/PrivacyPolicy'
 import { RequisitesPage } from './components/RequisitesPage'
 import { LEGAL_DETAILS } from './legal'
+import { bindTheme, persistTheme, storedTheme, type ThemePreference } from './lib/theme'
 
 export type Page = 'dashboard'|'calendar'|'tasks'|'goals'|'habits'|'analytics'|'settings'
 type SiteRoute = 'app'|'requisites'
@@ -31,14 +32,15 @@ export default function App() {
   const [menu,setMenu]=useState(false)
   const [assistant,setAssistant]=useState(false)
   const [refreshKey,setRefreshKey]=useState(0)
+  const [theme,setThemeState]=useState<ThemePreference>(()=>storedTheme())
   const [calendarView,setCalendarViewState]=useState<CalendarView>(()=>{
     const saved=localStorage.getItem('axel_calendar_view')
     return saved==='day'||saved==='month'?saved:'week'
   })
 
-  useEffect(()=>{document.documentElement.dataset.theme='dark';document.documentElement.style.colorScheme='dark'},[])
+  useEffect(()=>bindTheme(theme),[theme])
   useEffect(()=>{const open=()=>setAssistant(true);window.addEventListener('axel:open-ai',open);return()=>window.removeEventListener('axel:open-ai',open)},[])
-  useEffect(()=>{if(!session.access){setChecking(false);return}api<User>('/auth/me').then(setUser).catch(()=>session.clear()).finally(()=>setChecking(false))},[])
+  useEffect(()=>{if(!session.access){setChecking(false);return}Promise.all([api<User>('/auth/me'),api<Settings>('/settings')]).then(([currentUser,currentSettings])=>{setUser(currentUser);setTheme(currentSettings.theme as ThemePreference)}).catch(()=>session.clear()).finally(()=>setChecking(false))},[])
   useEffect(()=>{const syncRoute=()=>setRoute(routeFromLocation());window.addEventListener('popstate',syncRoute);return()=>window.removeEventListener('popstate',syncRoute)},[])
 
   const openRequisites=()=>{
@@ -55,7 +57,8 @@ export default function App() {
     }
   }
   if(route==='requisites')return <RequisitesPage onBack={closeRequisites}/>
-  const authenticated=(tokens:Tokens)=>{session.save(tokens);setUser(tokens.user)}
+  const setTheme=(next:ThemePreference)=>{persistTheme(next);setThemeState(next)}
+  const authenticated=(tokens:Tokens)=>{session.save(tokens);setUser(tokens.user);void api<Settings>('/settings').then(current=>setTheme(current.theme as ThemePreference))}
   const logout=()=>{void api('/auth/logout',{method:'POST'}).catch(()=>undefined).finally(()=>{session.clear();setUser(null);setMenu(false)})}
   const navigate=(next:Page)=>{setPage(next);setMenu(false);window.scrollTo({top:0,behavior:'smooth'})}
   const changed=()=>setRefreshKey(value=>value+1)
@@ -65,12 +68,12 @@ export default function App() {
   if(!user)return <AuthScreen onAuth={authenticated} onRequisites={openRequisites}/>
 
   const pages:Record<Exclude<Page,'calendar'>,React.ReactNode>={
-    dashboard:<PremiumDashboardPage key={`d${refreshKey}`} navigate={navigate} onChanged={changed}/>,
-    tasks:<TasksPage key={`t${refreshKey}`} onChanged={changed}/>,
-    goals:<GoalsPage key={`g${refreshKey}`} onChanged={changed}/>,
-    habits:<HabitsPage key={`h${refreshKey}`} onChanged={changed}/>,
-    analytics:<AnalyticsPage key={`a${refreshKey}`}/>,
-    settings:<SettingsPage user={user} onUser={setUser}/>,
+    dashboard:<PremiumDashboardPage key={`d${refreshKey}`} timezone={user.timezone} navigate={navigate} onChanged={changed}/>,
+    tasks:<TasksPage key={`t${refreshKey}`} timezone={user.timezone} onChanged={changed}/>,
+    goals:<GoalsPage key={`g${refreshKey}`} timezone={user.timezone} onChanged={changed}/>,
+    habits:<HabitsPage key={`h${refreshKey}`} timezone={user.timezone} onChanged={changed}/>,
+    analytics:<AnalyticsPage key={`a${refreshKey}`} timezone={user.timezone}/>,
+    settings:<SettingsPage user={user} onUser={setUser} onTheme={setTheme}/>,
   }
   return <div className={`app-shell ${page==='calendar'?'calendar-mode':''}`}>
     <AppHeader page={page} user={user} calendarView={calendarView} onCalendarView={setCalendarView} onMenu={()=>setMenu(true)} onAssistant={()=>setAssistant(true)} onHome={()=>navigate('dashboard')}/>

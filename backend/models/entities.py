@@ -42,6 +42,9 @@ class User(Base):
     ai_action_proposals: Mapped[list[AIActionProposal]] = relationship(back_populates="user", cascade="all, delete-orphan")
     auth_sessions: Mapped[list[AuthSession]] = relationship(back_populates="user", cascade="all, delete-orphan")
     one_time_tokens: Mapped[list[OneTimeToken]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    notification_deliveries: Mapped[list[NotificationDelivery]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
     @property
     def email_verified(self) -> bool:
@@ -53,7 +56,7 @@ class UserSettings(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
-    theme: Mapped[str] = mapped_column(String(20), default="system")
+    theme: Mapped[str] = mapped_column(String(20), default="dark")
     language: Mapped[str] = mapped_column(String(10), default="ru")
     notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_digest_time: Mapped[str] = mapped_column(String(5), default="08:30")
@@ -340,3 +343,32 @@ class OneTimeToken(Base):
     used_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="one_time_tokens")
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key"),
+        Index("ix_notification_deliveries_due", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255))
+    channel: Mapped[str] = mapped_column(String(20), default="email")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    subject: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text)
+    scheduled_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="notification_deliveries")

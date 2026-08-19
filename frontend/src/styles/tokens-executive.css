@@ -1,0 +1,24 @@
+/* Axel One — executive dark design system */
+:root,[data-theme="dark"]{
+  --background:#080809;--background-secondary:#0c0c0e;--surface:#111114;--surface-hover:#17171a;--surface-active:#211d11;
+  --border:#232326;--border-subtle:#1a1a1d;--border-gold:rgba(211,174,67,.35);
+  --text-primary:#f1efeb;--text-secondary:#96918d;--text-muted:#625f5c;
+  --gold:#d3ae43;--gold-light:#ebca68;--gold-dark:#9f7e27;--gold-surface:rgba(211,174,67,.12);
+  --green:#4fc28b;--green-surface:rgba(79,194,139,.14);--blue:#5b9df5;--blue-surface:rgba(91,157,245,.15);
+  --red:#ef6267;--red-surface:rgba(239,98,103,.14);--purple:#a681df;--purple-surface:rgba(166,129,223,.15);
+  --ink:var(--text-primary);--muted:var(--text-secondary);--soft:var(--background);--line:var(--border);--card:var(--surface);
+  --violet:var(--gold);--violet-dark:var(--gold-dark);--mint:var(--green);--orange:var(--red);--shadow:none;
+  color-scheme:dark;background:var(--background);color:var(--text-primary)
+}
+[data-theme="light"]{
+  --background:#f7f6f2;--background-secondary:#efede7;--surface:#ffffff;--surface-hover:#f3f0e8;--surface-active:#eadfbe;
+  --border:#d9d5cc;--border-subtle:#e8e4dc;--border-gold:rgba(139,103,20,.32);
+  --text-primary:#201f1c;--text-secondary:#615e57;--text-muted:#878279;
+  --gold:#b78a24;--gold-light:#7d5d12;--gold-dark:#72520d;--gold-surface:rgba(183,138,36,.12);
+  --green:#238760;--green-surface:rgba(35,135,96,.12);--blue:#3479c5;--blue-surface:rgba(52,121,197,.12);
+  --red:#c7474c;--red-surface:rgba(199,71,76,.11);--purple:#7952aa;--purple-surface:rgba(121,82,170,.12);
+  --ink:var(--text-primary);--muted:var(--text-secondary);--soft:var(--background);--line:var(--border);--card:var(--surface);
+  --violet:var(--gold);--violet-dark:var(--gold-dark);--mint:var(--green);--orange:var(--red);--shadow:0 10px 32px rgba(55,48,35,.06);
+  color-scheme:light;background:var(--background);color:var(--text-primary)
+}
+html,body,#root{min-width:0;background:var(--background);color:var(--text-primary);overflow-x:hidden}body{font-family:Manrope,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select,textarea{font-family:inherit}button{transition:background-color .18s ease,border-color .18s ease,color .18s ease,transform .18s ease,opacity .18s ease}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--gold-light);outline-offset:2px}h1,h2,.serif{font-family:"Cormorant Garamond",Georgia,"Times New Roman",serif;font-weight:500}.primary{background:var(--gold);color:#090909;border:1px solid var(--gold);box-shadow:none}.primary:hover{background:var(--gold-light);transform:translateY(-1px)}.primary.compact{height:38px;border-radius:11px;padding:0 18px}.secondary{background:var(--surface);color:var(--text-primary);border:1px solid var(--border);box-shadow:none}.secondary:hover{border-color:var(--border-gold);background:var(--surface-hover)}.icon-btn:hover{background:var(--surface-hover);color:var(--text-primary)}

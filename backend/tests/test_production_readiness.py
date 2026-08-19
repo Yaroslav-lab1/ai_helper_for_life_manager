@@ -295,5 +295,6 @@ def test_production_configuration_rejects_defaults_and_accepts_safe_values():
         email_from="noreply@example.com",
         use_secure_auth_cookies=True,
         llm_provider="ollama",
+        notification_worker_enabled=True,
     )
     safe.validate_runtime()

@@ -212,6 +212,15 @@ SMTP_PASSWORD=SMTP_ПАРОЛЬ
 SMTP_USE_TLS=true
 EMAIL_FROM=noreply@example.com
 
+NOTIFICATION_WORKER_ENABLED=true
+NOTIFICATION_POLL_INTERVAL_SECONDS=30
+NOTIFICATION_SCHEDULE_HORIZON_HOURS=48
+NOTIFICATION_RETRY_BASE_SECONDS=60
+NOTIFICATION_RETRY_MAX_SECONDS=3600
+NOTIFICATION_MAX_ATTEMPTS=5
+NOTIFICATION_CLAIM_TIMEOUT_SECONDS=300
+NOTIFICATION_BATCH_SIZE=20
+
 ENABLE_DEMO_SEED=false
 VITE_ENABLE_DEMO_LOGIN=false
 
@@ -252,7 +261,7 @@ sudo docker compose \
 
 Если отсутствует обязательная переменная, Compose завершится ошибкой. Backend
 также блокирует production-запуск с небезопасными секретами, SQLite,
-localhost-CORS, console email или включённым demo seed.
+localhost-CORS, console email, отключённым notification worker или включённым demo seed.
 
 ## 11. Запустить production
 
@@ -314,6 +323,8 @@ curl https://app.example.com/health
 7. Убедитесь, что ответ одинаков для существующего и неизвестного email.
 8. Откройте письмо, установите новый пароль.
 9. Проверьте, что старый пароль и старые сессии больше не работают.
+10. Создайте событие и задачу с ближайшим напоминанием, дождитесь SMTP-письма и убедитесь, что в колокольчике появилась одна запись.
+11. Проверьте ежедневный дайджест после `daily_digest_time` пользователя и отсутствие второго дайджеста в тот же локальный день.
 
 В DevTools браузера проверьте refresh cookie:
 

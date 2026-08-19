@@ -20,6 +20,7 @@ from backend.models import (
     Habit,
     HabitCheckin,
     Recommendation,
+    NotificationDelivery,
     Task,
 )
 from backend.schemas.account import AccountDeleteRequest
@@ -76,6 +77,12 @@ def export_account(user: CurrentUser, db: DbSession):
         "goal_plans": [_row(item) for item in plans],
         "goal_plan_versions": [_row(item) for item in db.scalars(select(GoalPlanVersion).where(GoalPlanVersion.user_id == user.id)).all()],
         "ai_action_proposals": [_row(item) for item in db.scalars(select(AIActionProposal).where(AIActionProposal.user_id == user.id)).all()],
+        "notification_deliveries": [
+            _row(item, exclude={"last_error", "locked_by"})
+            for item in db.scalars(
+                select(NotificationDelivery).where(NotificationDelivery.user_id == user.id)
+            ).all()
+        ],
     }
     return JSONResponse(
         content=jsonable_encoder(payload),

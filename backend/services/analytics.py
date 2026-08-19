@@ -6,7 +6,8 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from backend.models import BalanceAssessment, Event, Goal, Habit, Task, User
+from backend.models import BalanceAssessment, Goal, Habit, Task, User
+from backend.services.recurrence import events_for_range
 from backend.services.habits import streak_stats
 from backend.services.time import day_bounds_utc, in_timezone, now_for, today_for
 
@@ -25,9 +26,7 @@ def overload_for_user(
     timezone_name = timezone_name or _timezone_name(db, user_id)
     day = day or today_for(timezone_name)
     start, end = day_bounds(day, timezone_name)
-    events = db.scalars(
-        select(Event).where(Event.user_id == user_id, Event.start_at < end, Event.end_at > start)
-    ).all()
+    events = events_for_range(db, user_id, start, end, timezone_name)
     tasks = db.scalars(
         select(Task).where(Task.user_id == user_id, Task.status.in_(["todo", "in_progress"]))
     ).all()
@@ -71,9 +70,7 @@ def energy_for_user(
     timezone_name = timezone_name or _timezone_name(db, user_id)
     day = day or today_for(timezone_name)
     start, end = day_bounds(day, timezone_name)
-    events = db.scalars(
-        select(Event).where(Event.user_id == user_id, Event.start_at < end, Event.end_at > start).order_by(Event.start_at)
-    ).all()
+    events = events_for_range(db, user_id, start, end, timezone_name)
     tasks = db.scalars(
         select(Task).where(Task.user_id == user_id, Task.status.in_(["todo", "in_progress"]), Task.due_at <= end)
     ).all()
@@ -170,7 +167,8 @@ def analytics_for_user(
         for task in completed
         if task.completed_at
     )
-    events = db.scalars(select(Event).where(Event.user_id == user_id, Event.start_at >= since)).all()
+    _, until = day_bounds(today, timezone_name)
+    events = events_for_range(db, user_id, since, until, timezone_name)
     category_minutes: Counter[str] = Counter()
     for event in events:
         category_minutes[event.category] += max(0, int((event.end_at - event.start_at).total_seconds() / 60))
@@ -196,9 +194,7 @@ def dashboard_for_user(db: Session, user: User) -> dict:
     local_now = now_for(user.timezone)
     today = local_now.date()
     start, end = day_bounds(today, user.timezone)
-    events = db.scalars(
-        select(Event).where(Event.user_id == user.id, Event.start_at < end, Event.end_at > start).order_by(Event.start_at)
-    ).all()
+    events = events_for_range(db, user.id, start, end, user.timezone)
     tasks = db.scalars(
         select(Task).where(Task.user_id == user.id, Task.status.in_(["todo", "in_progress"])).order_by(Task.due_at)
     ).all()
@@ -231,6 +227,9 @@ def dashboard_for_user(db: Session, user: User) -> dict:
         "events_today": [
             {
                 "id": e.id,
+                "series_id": e.series_id,
+                "occurrence_id": e.occurrence_id,
+                "is_occurrence": e.is_occurrence,
                 "title": e.title,
                 "start_at": in_timezone(e.start_at, user.timezone).isoformat(),
                 "end_at": in_timezone(e.end_at, user.timezone).isoformat(),

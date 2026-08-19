@@ -1,6 +1,8 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -10,12 +12,25 @@ from backend.api.router import api_router
 from backend.config import settings
 from backend.schemas.common import HealthResponse
 from backend.services.time import utc_now
+from backend.services.notifications import NotificationWorker
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings.validate_runtime()
-    yield
+    worker = NotificationWorker() if settings.notification_worker_enabled else None
+    worker_task = asyncio.create_task(worker.run()) if worker else None
+    try:
+        yield
+    finally:
+        if worker and worker_task:
+            worker.stop()
+            try:
+                await asyncio.wait_for(worker_task, timeout=20)
+            except TimeoutError:
+                worker_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker_task
 
 app = FastAPI(
     title=settings.app_name,
@@ -57,7 +72,10 @@ async def production_security_headers(request: Request, call_next):
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(_: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=422, content={"detail": "Validation failed", "errors": exc.errors()})
+    return JSONResponse(
+        status_code=422,
+        content=jsonable_encoder({"detail": "Validation failed", "errors": exc.errors()}),
+    )
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
