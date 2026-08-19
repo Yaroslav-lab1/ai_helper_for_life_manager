@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     email_from: str = ""
     email_token_minutes: int = 30
-    privacy_policy_version: str = "2026-07-28"
+    privacy_policy_version: str = "2026-08-17"
     use_secure_auth_cookies: bool = False
     refresh_cookie_name: str = "axel_refresh"
     refresh_cookie_samesite: str = "lax"

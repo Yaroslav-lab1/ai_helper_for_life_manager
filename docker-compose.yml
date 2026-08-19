@@ -33,6 +33,7 @@ services:
       USE_SECURE_AUTH_COOKIES: "false"
       REFRESH_COOKIE_SAMESITE: lax
       EMAIL_BACKEND: console
+      PRIVACY_POLICY_VERSION: ${PRIVACY_POLICY_VERSION:-2026-08-17}
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       LLM_MODEL: ${LLM_MODEL:-qwen3.5:9b}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}

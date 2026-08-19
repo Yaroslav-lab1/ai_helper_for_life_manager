@@ -8,8 +8,12 @@ import PremiumCalendarPage from './components/PremiumCalendar'
 import { AIAssistantPanel, AppHeader, Logo, MobileScrim, Sidebar } from './components/PremiumShell'
 import { PrivacyPolicy } from './components/PrivacyPolicy'
 import { RequisitesPage } from './components/RequisitesPage'
+import { LEGAL_DETAILS } from './legal'
 
 export type Page = 'dashboard'|'calendar'|'tasks'|'goals'|'habits'|'analytics'|'settings'
+type SiteRoute = 'app'|'requisites'
+
+const routeFromLocation=():SiteRoute=>window.location.pathname.replace(/\/$/,'')==='/requisites'?'requisites':'app'
 
 const mobileNav:{id:Page;label:string;icon:typeof LayoutDashboard}[]=[
   {id:'dashboard',label:'Главная',icon:LayoutDashboard},
@@ -22,6 +26,7 @@ const mobileNav:{id:Page;label:string;icon:typeof LayoutDashboard}[]=[
 export default function App() {
   const [user,setUser]=useState<User|null>(null)
   const [checking,setChecking]=useState(true)
+  const [route,setRoute]=useState<SiteRoute>(routeFromLocation)
   const [page,setPage]=useState<Page>('dashboard')
   const [menu,setMenu]=useState(false)
   const [assistant,setAssistant]=useState(false)
@@ -34,8 +39,22 @@ export default function App() {
   useEffect(()=>{document.documentElement.dataset.theme='dark';document.documentElement.style.colorScheme='dark'},[])
   useEffect(()=>{const open=()=>setAssistant(true);window.addEventListener('axel:open-ai',open);return()=>window.removeEventListener('axel:open-ai',open)},[])
   useEffect(()=>{if(!session.access){setChecking(false);return}api<User>('/auth/me').then(setUser).catch(()=>session.clear()).finally(()=>setChecking(false))},[])
+  useEffect(()=>{const syncRoute=()=>setRoute(routeFromLocation());window.addEventListener('popstate',syncRoute);return()=>window.removeEventListener('popstate',syncRoute)},[])
 
-  if(window.location.pathname.replace(/\/$/,'')==='/requisites')return <RequisitesPage/>
+  const openRequisites=()=>{
+    window.history.pushState({axelRoute:'requisites'},'', '/requisites')
+    setRoute('requisites')
+    window.scrollTo({top:0})
+  }
+  const closeRequisites=()=>{
+    if(window.history.state?.axelRoute==='requisites')window.history.back()
+    else{
+      window.history.replaceState({},'', '/')
+      setRoute('app')
+      window.scrollTo({top:0})
+    }
+  }
+  if(route==='requisites')return <RequisitesPage onBack={closeRequisites}/>
   const authenticated=(tokens:Tokens)=>{session.save(tokens);setUser(tokens.user)}
   const logout=()=>{void api('/auth/logout',{method:'POST'}).catch(()=>undefined).finally(()=>{session.clear();setUser(null);setMenu(false)})}
   const navigate=(next:Page)=>{setPage(next);setMenu(false);window.scrollTo({top:0,behavior:'smooth'})}
@@ -43,7 +62,7 @@ export default function App() {
   const setCalendarView=(view:CalendarView)=>{setCalendarViewState(view);localStorage.setItem('axel_calendar_view',view)}
 
   if(checking)return <div className="app-loader"><Logo/><span>Собираем ваш день…</span></div>
-  if(!user)return <AuthScreen onAuth={authenticated}/>
+  if(!user)return <AuthScreen onAuth={authenticated} onRequisites={openRequisites}/>
 
   const pages:Record<Exclude<Page,'calendar'>,React.ReactNode>={
     dashboard:<PremiumDashboardPage key={`d${refreshKey}`} navigate={navigate} onChanged={changed}/>,
@@ -55,7 +74,7 @@ export default function App() {
   }
   return <div className={`app-shell ${page==='calendar'?'calendar-mode':''}`}>
     <AppHeader page={page} user={user} calendarView={calendarView} onCalendarView={setCalendarView} onMenu={()=>setMenu(true)} onAssistant={()=>setAssistant(true)} onHome={()=>navigate('dashboard')}/>
-    <Sidebar page={page} user={user} open={menu} navigate={navigate} onClose={()=>setMenu(false)} onLogout={logout} onAssistant={()=>setAssistant(true)}/>
+    <Sidebar page={page} user={user} open={menu} navigate={navigate} onClose={()=>setMenu(false)} onLogout={logout} onAssistant={()=>setAssistant(true)} onRequisites={openRequisites}/>
     {page==='calendar'?<PremiumCalendarPage key={`c${refreshKey}`} view={calendarView} onView={setCalendarView} plannerOpen={assistant} onPlannerOpen={()=>setAssistant(true)} onPlannerClose={()=>setAssistant(false)} onChanged={changed}/>:<>
       <main className="workspace-main">{pages[page as Exclude<Page,'calendar'>]}</main>
       <AIAssistantPanel open={assistant} onClose={()=>setAssistant(false)}/>
@@ -65,7 +84,7 @@ export default function App() {
   </div>
 }
 
-function AuthScreen({onAuth}:{onAuth:(tokens:Tokens)=>void}) {
+function AuthScreen({onAuth,onRequisites}:{onAuth:(tokens:Tokens)=>void;onRequisites:()=>void}) {
   const pathMode=window.location.pathname.endsWith('/reset-password')?'reset':window.location.pathname.endsWith('/verify-email')?'verify':'login'
   const [mode,setMode]=useState<'login'|'register'|'forgot'|'reset'|'verify'>(pathMode)
   const [error,setError]=useState('')
@@ -98,7 +117,7 @@ function AuthScreen({onAuth}:{onAuth:(tokens:Tokens)=>void}) {
       {mode==='login'&&<button className="demo-button" type="button" onClick={()=>setMode('forgot')}>Забыли пароль?</button>}
       {(mode==='forgot'||mode==='reset'||mode==='verify')&&<button className="demo-button" type="button" onClick={()=>setMode('login')}>Вернуться ко входу</button>}
       {demoEnabled&&mode==='login'&&<><button className="demo-button" type="button" onClick={demo}>Заполнить данные локального демо-аккаунта</button><small className="form-note">Доступно только в development</small></>}
-      <div className="auth-legal"><div><button className="privacy-link" type="button" onClick={()=>setPrivacy(true)}>Политика конфиденциальности</button><a className="privacy-link" href="/requisites">Контакты и реквизиты</a></div><small>Самозанятый · ИНН 773016037615</small></div>
+      <div className="auth-legal"><div><button className="privacy-link" type="button" onClick={()=>setPrivacy(true)}>Политика конфиденциальности</button><a className="privacy-link" href="/requisites" onClick={event=>{event.preventDefault();onRequisites()}}>Контакты и реквизиты</a></div><small>Самозанятая · ИНН {LEGAL_DETAILS.taxId}</small></div>
     </form></section>
     {privacy&&<PrivacyPolicy onClose={()=>setPrivacy(false)}/>}
   </div>
