@@ -1,0 +1,28 @@
+/* Readability pass: comfortable type, stronger contrast, calmer labels */
+[data-theme="dark"]{
+  --text-secondary:#b9b4ae;
+  --text-muted:#8b8782;
+  --border:#303034;
+  --border-subtle:#242428;
+}
+body{font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+button,input,select,textarea{line-height:1.35}
+
+.page-header p{font-size:13px;line-height:1.65}.eyebrow{font-size:10px;letter-spacing:.1em}
+.card-head h3{font-size:14px}.card-head small{font-size:10px;letter-spacing:.05em}.card-head>button{font-size:11px}
+.nav-group>p{font-size:10px;letter-spacing:.12em}.sidebar-item{font-size:13px}.assistant-status b{font-size:12px}.assistant-status span{font-size:10px;line-height:1.55}.sidebar-account b{font-size:11px}.sidebar-account small{font-size:10px}
+
+.dashboard-intro p{font-size:13px}.progress-card b{font-size:12px}.progress-card div>span{font-size:10px}.stat-card>span:not(.badge){font-size:12px;line-height:1.45}.badge{min-height:24px;font-size:10px}.premium-card>header h2{font-size:14px}.premium-card>header button{font-size:11px}.schedule-row{min-height:44px}.schedule-row time{font-size:11px}.schedule-row>b{font-size:12px}.balance-compact span,.balance-compact b,.premium-goals span b,.premium-goals span em{font-size:11px}.premium-alert b{font-size:12px}.premium-alert span,.premium-alert button{font-size:10px}
+.task-main span,.task-meta>span{font-size:10px}.goal-title>span{font-size:9px;letter-spacing:.05em}.goal-title p{font-size:11px}.goal-progress>div:first-child{font-size:10px}.goal-progress small{font-size:9px}.steps-head>b{font-size:12px}.goal-steps>button>span{font-size:11px;line-height:1.55}.goal-steps>button small{font-size:9px}.habit-card>p,.habit-stats small,.habit-tip small{font-size:10px}.habit-complete{font-size:11px}
+
+.mini-title b{font-size:14px}.mini-weekdays b{font-size:10px;color:var(--text-muted)}.mini-days button{font-size:12px}.calendar-listing h4,.calendar-insights h4,.planner-scroll>h4{font-size:11px;letter-spacing:.1em}.calendar-listing>div{height:42px;font-size:12px}.calendar-listing b{font-size:11px}.calendar-insights article{padding:17px}.calendar-insights article>b{font-size:13px}.calendar-insights article>p{font-size:12px;line-height:1.65}.calendar-insights article>button{font-size:11px}
+.calendar-toolbar>p{font-size:12px}.calendar-toolbar .today-button{font-size:12px}.week-grid-head b{font-size:11px}.week-grid-head em{font-size:20px}.time-axis span{font-size:11px;color:var(--text-secondary)}.week-event b{font-size:12px}.week-event span{font-size:10px}.month-weekdays b{font-size:11px}.month-day-number{font-size:17px}.month-events button{height:28px;font-size:10px}
+
+.ai-panel-head b{font-size:16px}.ai-panel-head small{font-size:11px}.planner-tabs button{font-size:12px}.planner-card{grid-template-columns:58px 1fr;gap:11px;padding:17px 13px}.planner-card time{font-size:12px}.planner-card div>b{font-size:13px;line-height:1.45}.planner-card p{font-size:12px;line-height:1.65}.planner-card-actions button{min-height:34px;padding:0 10px;font-size:10px}.plan-success,.plan-error{font-size:11px}
+.energy-period button{height:35px;font-size:10px}.energy-score>div:last-child span{font-size:10px}.energy-tooltip{padding:11px}.energy-tooltip b{font-size:11px}.energy-tooltip span{font-size:10px}.energy-tooltip p{font-size:9px;line-height:1.6}.energy-legend span{font-size:9px}.energy-factors h4,.energy-advice h4{font-size:10px;letter-spacing:.09em}.energy-factors>div{min-height:50px}.energy-factors span,.energy-factors b{font-size:10px}.energy-factors small{font-size:8px}.energy-advice>div{grid-template-columns:48px 1fr;padding:12px 0}.energy-advice time{font-size:11px}.energy-advice b{font-size:10px}.energy-advice small{font-size:9px;line-height:1.6}
+.planner-chat-tools span,.planner-chat-tools button{font-size:10px}.planner-message>div{padding:12px 13px;font-size:13px;line-height:1.65}.planner-message time{font-size:9px}.chat-empty b{font-size:13px}.chat-empty span{font-size:12px;line-height:1.65}.planner-prompts button{height:35px;padding:0 11px;font-size:10px}.planner-chat-input textarea{min-height:48px;padding:12px;font-size:12px}.planner-chat-input{grid-template-columns:1fr 44px}.planner-chat-input button{width:44px;height:44px}
+.ai-summary-card h3,.ai-question h3{font-size:14px}.ai-summary-card>p{font-size:12px;line-height:1.65}.signal-list span{min-height:40px;font-size:11px}.signal-list b{font-size:11px}.ai-recommendation b{font-size:11px}.ai-recommendation p{font-size:11px;line-height:1.6}.premium-message>div{font-size:12px;line-height:1.65}.quick-prompts button{font-size:10px}.assistant-input input{font-size:12px}
+
+@media(max-width:767px){
+  .calendar-toolbar h1{font-size:20px}.calendar-header .view-switch button{font-size:10px}.month-day-number{font-size:13px}.month-events button{height:18px}.planner-card div>b{font-size:13px}.planner-card p,.planner-message>div{font-size:12px}
+}

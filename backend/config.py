@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     use_secure_auth_cookies: bool = False
     refresh_cookie_name: str = "axel_refresh"
     refresh_cookie_samesite: str = "lax"
+    notification_worker_enabled: bool = False
+    notification_poll_interval_seconds: int = 30
+    notification_schedule_horizon_hours: int = 48
+    notification_retry_base_seconds: int = 60
+    notification_retry_max_seconds: int = 3600
+    notification_max_attempts: int = 5
+    notification_claim_timeout_seconds: int = 300
+    notification_batch_size: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -121,6 +129,22 @@ class Settings(BaseSettings):
             errors.append("REFRESH_COOKIE_SAMESITE must be lax or strict in production")
         if self.llm_provider == "gigachat" and not self.gigachat_authorization_key:
             errors.append("GIGACHAT_AUTHORIZATION_KEY is required for the GigaChat provider")
+        if not self.notification_worker_enabled:
+            errors.append("NOTIFICATION_WORKER_ENABLED must be true in production")
+        if self.notification_poll_interval_seconds < 1:
+            errors.append("NOTIFICATION_POLL_INTERVAL_SECONDS must be positive")
+        if self.notification_schedule_horizon_hours < 1:
+            errors.append("NOTIFICATION_SCHEDULE_HORIZON_HOURS must be positive")
+        if self.notification_retry_base_seconds < 1:
+            errors.append("NOTIFICATION_RETRY_BASE_SECONDS must be positive")
+        if self.notification_retry_max_seconds < self.notification_retry_base_seconds:
+            errors.append("NOTIFICATION_RETRY_MAX_SECONDS cannot be below the retry base")
+        if self.notification_max_attempts < 1:
+            errors.append("NOTIFICATION_MAX_ATTEMPTS must be positive")
+        if self.notification_claim_timeout_seconds < 1:
+            errors.append("NOTIFICATION_CLAIM_TIMEOUT_SECONDS must be positive")
+        if self.notification_batch_size < 1:
+            errors.append("NOTIFICATION_BATCH_SIZE must be positive")
         if errors:
             raise RuntimeError("Unsafe production configuration:\n- " + "\n- ".join(errors))
 

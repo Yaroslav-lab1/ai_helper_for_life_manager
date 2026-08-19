@@ -4,7 +4,9 @@ import {
 } from 'lucide-react'
 import type { Page } from '../App'
 import { LEGAL_DETAILS } from '../legal'
-import type { CalendarView, EventItem, User } from '../types'
+import type { CalendarView, EventItem, NotificationSummary, User } from '../types'
+import { api } from '../lib/api'
+import { useEffect, useState } from 'react'
 import { ChatPanel } from './ChatPanel'
 
 export function Logo({onClick}:{onClick?:()=>void}) {
@@ -18,6 +20,11 @@ export function Badge({children,tone='gold'}:{children:React.ReactNode;tone?:'go
 }
 
 export function AppHeader({page,user,calendarView='week',onCalendarView,onMenu,onAssistant,onHome}:{page:Page;user:User;calendarView?:CalendarView;onCalendarView?:(view:CalendarView)=>void;onMenu:()=>void;onAssistant:()=>void;onHome:()=>void}) {
+  const [notifications,setNotifications]=useState<NotificationSummary|null>(null)
+  const [notificationsOpen,setNotificationsOpen]=useState(false)
+  const loadNotifications=()=>api<NotificationSummary>('/notifications').then(setNotifications).catch(()=>undefined)
+  useEffect(()=>{void loadNotifications()},[user.id])
+  const markRead=async(id:number)=>setNotifications(await api<NotificationSummary>(`/notifications/${id}/read`,{method:'POST'}))
   const calendar = page === 'calendar'
   const date = new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'long'}).format(new Date())
   return <header className={`app-header ${calendar?'calendar-header':''}`}>
@@ -28,7 +35,7 @@ export function AppHeader({page,user,calendarView='week',onCalendarView,onMenu,o
     </div> : <div className="header-section-name">Персональная система управления</div>}
     <div className="header-actions">
       {calendar ? <button className="primary compact" onClick={()=>window.dispatchEvent(new Event('axel:add-event'))}>+ Событие</button> : <span className="date-chip">{date}</span>}
-      <button className="header-icon" aria-label="Уведомления"><Bell/></button>
+      <div className="notification-menu"><button className="header-icon" aria-label="Уведомления" aria-expanded={notificationsOpen} onClick={()=>{setNotificationsOpen(value=>!value);if(!notificationsOpen)void loadNotifications()}}><Bell/>{Boolean(notifications?.unread)&&<i>{notifications!.unread}</i>}</button>{notificationsOpen&&<div className="notification-popover"><header><b>Уведомления</b><span>{notifications?.unread||0} новых</span></header>{notifications?.items.length?notifications.items.map(item=><button key={item.id} className={item.read_at?'read':''} onClick={()=>void markRead(item.id)}><b>{item.title}</b><span>{item.body}</span><small>{item.status==='sent'?'Отправлено':item.status==='failed'?'Ошибка доставки':'Запланировано'}</small></button>):<p>Новых уведомлений нет.</p>}</div>}</div>
       <button className="avatar round" aria-label={user.name} style={{background:user.avatar_color}}>{user.name.slice(0,1).toUpperCase()}</button>
       <button className="assistant-mobile-trigger" onClick={onAssistant} aria-label="Открыть AI-ассистента"><Sparkles/></button>
     </div>

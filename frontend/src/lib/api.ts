@@ -13,13 +13,26 @@ export const session = {
   clear() { sessionStorage.removeItem('axel_access'); sessionStorage.removeItem('axel_refresh') },
 }
 
-async function renew(): Promise<boolean> {
-  const response = await fetch(`${API_URL}/auth/refresh`, {
-    method: 'POST', credentials:'include', headers: {'Content-Type':'application/json'}, body: JSON.stringify({refresh_token: session.refresh||null}),
-  })
-  if (!response.ok) { session.clear(); return false }
-  session.save(await response.json())
-  return true
+let refreshInFlight: Promise<boolean> | null = null
+
+async function performRenew(): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_URL}/auth/refresh`, {
+      method: 'POST', credentials:'include', headers: {'Content-Type':'application/json'}, body: JSON.stringify({refresh_token: session.refresh||null}),
+    })
+    if (!response.ok) { session.clear(); return false }
+    session.save(await response.json())
+    return true
+  } catch {
+    session.clear()
+    return false
+  }
+}
+
+export function renew(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight
+  refreshInFlight = performRenew().finally(() => { refreshInFlight = null })
+  return refreshInFlight
 }
 
 export async function api<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
@@ -37,12 +50,12 @@ export async function api<T>(path: string, options: RequestInit = {}, retry = tr
   return response.json()
 }
 
-export async function downloadAccountExport(): Promise<void> {
+export async function downloadAccountExport(retry = true): Promise<void> {
   const response = await fetch(`${API_URL}/account/export`, {
     credentials:'include',
     headers: {Authorization:`Bearer ${session.access}`},
   })
-  if (response.status === 401 && await renew()) return downloadAccountExport()
+  if (response.status === 401 && retry && await renew()) return downloadAccountExport(false)
   if (!response.ok) throw new Error('Не удалось подготовить экспорт')
   const blob = await response.blob()
   const url = URL.createObjectURL(blob)

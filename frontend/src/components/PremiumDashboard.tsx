@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarDays, CheckCircle2, CircleDot, Diamond, ListTodo, Plus, Target, Triangle, X } from 'lucide-react'
 import type { Page } from '../App'
 import { api } from '../lib/api'
+import { dateTimeLocalValue, naiveDateTimeFromInput } from '../lib/datetime'
 import type { Balance, Dashboard, EventItem, Goal } from '../types'
 import { Badge } from './PremiumShell'
 import { Loading, Modal } from './UI'
 
 const localTime=(value:string)=>new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(new Date(value))
-const localInput=(date=new Date())=>{const value=new Date(date.getTime()-date.getTimezoneOffset()*60000);return value.toISOString().slice(0,16)}
+const localInput=dateTimeLocalValue
 
 export function ProgressRing({value}:{value:number}) {
   const safe=Math.max(0,Math.min(100,Math.round(value)))
@@ -23,7 +24,7 @@ const categoryName=(category:string)=>({work:'Работа',personal:'Лично
 
 export function ScheduleCard({events,onAdd}:{events:EventItem[];onAdd:()=>void}) {
   return <section className="premium-card schedule-card"><header><h2>Расписание сегодня</h2><button onClick={onAdd}>+ Добавить</button></header><div className="schedule-list">
-    {events.length?events.map(event=><div className={`schedule-row ${event.category==='focus'?'active':''}`} key={event.id}><time>{localTime(event.start_at)}</time><i className={`dot ${categoryTone(event.category)}`}/><b>{event.title}</b><Badge tone={categoryTone(event.category)}>{categoryName(event.category)}</Badge></div>):<div className="premium-empty"><CalendarDays/><b>Сегодня свободный день</b><span>Добавьте событие или оставьте пространство для восстановления.</span></div>}
+    {events.length?events.map(event=><div className={`schedule-row ${event.category==='focus'?'active':''}`} key={event.occurrence_id||event.id}><time>{localTime(event.start_at)}</time><i className={`dot ${categoryTone(event.category)}`}/><b>{event.title}</b><Badge tone={categoryTone(event.category)}>{categoryName(event.category)}</Badge></div>):<div className="premium-empty"><CalendarDays/><b>Сегодня свободный день</b><span>Добавьте событие или оставьте пространство для восстановления.</span></div>}
   </div></section>
 }
 
@@ -38,7 +39,7 @@ export function GoalsCard({goals,navigate}:{goals:Goal[];navigate:()=>void}) {
   return <section className="premium-card compact-analysis"><header><h2>Активные цели</h2><button onClick={navigate}>+ Цель</button></header><div className="premium-goals">{goals.length?goals.slice(0,4).map((goal,index)=><div key={goal.id}><span><i>{['◆','↗','◌','◇'][index]||'◇'}</i><b>{goal.title}</b><em>{goal.progress}%</em></span><div><i style={{width:`${goal.progress}%`}}/></div></div>):<div className="premium-empty small"><Target/><b>Нет активных целей</b><span>Добавьте ориентир, чтобы отслеживать прогресс.</span></div>}</div></section>
 }
 
-export default function PremiumDashboardPage({navigate,onChanged}:{navigate:(page:Page)=>void;onChanged:()=>void}) {
+export default function PremiumDashboardPage({timezone,navigate,onChanged}:{timezone:string;navigate:(page:Page)=>void;onChanged:()=>void}) {
   const [data,setData]=useState<Dashboard|null>(null)
   const [balance,setBalance]=useState<Balance[]>([])
   const [error,setError]=useState('')
@@ -65,16 +66,16 @@ export default function PremiumDashboardPage({navigate,onChanged}:{navigate:(pag
     <ScheduleCard events={data.events_today} onAdd={()=>setEventModal(true)}/>
     <div className="dashboard-analysis-grid"><LifeBalanceCard balance={balance[0]} navigate={()=>navigate('analytics')}/><GoalsCard goals={data.goals} navigate={()=>navigate('goals')}/></div>
     <button className="floating-quick-task" onClick={()=>setTaskModal(true)}><Plus/> Быстрая задача</button>
-    {taskModal&&<QuickTaskModal onClose={()=>setTaskModal(false)} onSaved={()=>{setTaskModal(false);void load();onChanged()}}/>}
+    {taskModal&&<QuickTaskModal timezone={timezone} onClose={()=>setTaskModal(false)} onSaved={()=>{setTaskModal(false);void load();onChanged()}}/>}
     {eventModal&&<QuickEventModal onClose={()=>setEventModal(false)} onSaved={()=>{setEventModal(false);void load();onChanged()}}/>}
   </div>
 }
 
-function QuickTaskModal({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}) {
-  const [form,setForm]=useState({title:'',due_at:localInput(),priority:'medium',estimate_minutes:30,energy:'medium',project:''})
+function QuickTaskModal({timezone,onClose,onSaved}:{timezone:string;onClose:()=>void;onSaved:()=>void}) {
+  const [form,setForm]=useState({title:'',due_at:localInput(new Date(),timezone),reminder_at:'',priority:'medium',estimate_minutes:30,energy:'medium',project:''})
   const [saving,setSaving]=useState(false);const [error,setError]=useState('')
-  const submit=async(event:React.FormEvent)=>{event.preventDefault();setSaving(true);setError('');try{await api('/tasks',{method:'POST',body:JSON.stringify({...form,due_at:new Date(form.due_at).toISOString().slice(0,19)})});onSaved()}catch(err){setError(err instanceof Error?err.message:'Ошибка')}finally{setSaving(false)}}
-  return <Modal title="Новая задача" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="full">Что нужно сделать?<input autoFocus required value={form.title} onChange={event=>setForm({...form,title:event.target.value})} placeholder="Например, подготовить презентацию"/></label><label>Срок<input type="datetime-local" value={form.due_at} onChange={event=>setForm({...form,due_at:event.target.value})}/></label><label>Приоритет<select value={form.priority} onChange={event=>setForm({...form,priority:event.target.value})}><option value="low">Низкий</option><option value="medium">Обычный</option><option value="high">Важный</option><option value="urgent">Срочный</option></select></label><label>Оценка, минут<input type="number" min="5" value={form.estimate_minutes} onChange={event=>setForm({...form,estimate_minutes:+event.target.value})}/></label><label>Проект<input value={form.project} onChange={event=>setForm({...form,project:event.target.value})}/></label>{error&&<div className="form-error full">{error}</div>}<div className="modal-actions full"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary" disabled={saving}>{saving?'Сохраняем…':'Создать'}</button></div></form></Modal>
+  const submit=async(event:React.FormEvent)=>{event.preventDefault();setSaving(true);setError('');try{await api('/tasks',{method:'POST',body:JSON.stringify({...form,due_at:naiveDateTimeFromInput(form.due_at),reminder_at:form.reminder_at?naiveDateTimeFromInput(form.reminder_at):null})});onSaved()}catch(err){setError(err instanceof Error?err.message:'Ошибка')}finally{setSaving(false)}}
+  return <Modal title="Новая задача" onClose={onClose}><form className="modal-form" onSubmit={submit}><label className="full">Что нужно сделать?<input autoFocus required value={form.title} onChange={event=>setForm({...form,title:event.target.value})} placeholder="Например, подготовить презентацию"/></label><label>Срок<input type="datetime-local" value={form.due_at} onChange={event=>setForm({...form,due_at:event.target.value})}/></label><label>Напомнить<input type="datetime-local" value={form.reminder_at} onChange={event=>setForm({...form,reminder_at:event.target.value})}/></label><label>Приоритет<select value={form.priority} onChange={event=>setForm({...form,priority:event.target.value})}><option value="low">Низкий</option><option value="medium">Обычный</option><option value="high">Важный</option><option value="urgent">Срочный</option></select></label><label>Оценка, минут<input type="number" min="5" value={form.estimate_minutes} onChange={event=>setForm({...form,estimate_minutes:+event.target.value})}/></label><label>Проект<input value={form.project} onChange={event=>setForm({...form,project:event.target.value})}/></label>{error&&<div className="form-error full">{error}</div>}<div className="modal-actions full"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary" disabled={saving}>{saving?'Сохраняем…':'Создать'}</button></div></form></Modal>
 }
 
 export function QuickEventModal({initialStart,eventToEdit,onClose,onSaved}:{initialStart?:Date;eventToEdit?:EventItem;onClose:()=>void;onSaved:()=>void}) {

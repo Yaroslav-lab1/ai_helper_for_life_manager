@@ -1,8 +1,9 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.schemas.common import ORMModel
+from backend.services.recurrence import normalize_recurrence_rule
 
 
 class EventBase(BaseModel):
@@ -15,6 +16,11 @@ class EventBase(BaseModel):
     location: str | None = None
     recurrence_rule: str | None = None
     reminder_minutes: int | None = Field(default=None, ge=0, le=10080)
+
+    @field_validator("recurrence_rule")
+    @classmethod
+    def valid_recurrence_rule(cls, value: str | None) -> str | None:
+        return normalize_recurrence_rule(value)
 
     @model_validator(mode="after")
     def validate_dates(self):
@@ -38,8 +44,16 @@ class EventUpdate(BaseModel):
     recurrence_rule: str | None = None
     reminder_minutes: int | None = Field(default=None, ge=0, le=10080)
 
+    @field_validator("recurrence_rule")
+    @classmethod
+    def valid_recurrence_rule(cls, value: str | None) -> str | None:
+        return normalize_recurrence_rule(value)
+
 
 class EventResponse(EventBase, ORMModel):
     id: int
     user_id: int
     created_at: datetime
+    series_id: int | None = None
+    occurrence_id: str | None = None
+    is_occurrence: bool = False

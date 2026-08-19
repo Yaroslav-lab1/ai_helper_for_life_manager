@@ -1,6 +1,6 @@
 export type User = { id: number; email: string; name: string; timezone: string; occupation?: string; avatar_color: string; email_verified:boolean; created_at: string }
 export type Tokens = { access_token: string; refresh_token?: string; expires_in: number; user: User }
-export type EventItem = { id: number; title: string; description?: string; start_at: string; end_at: string; category: string; color: string; location?: string; recurrence_rule?: string; reminder_minutes?: number }
+export type EventItem = { id: number; series_id?: number; occurrence_id?: string; is_occurrence?: boolean; title: string; description?: string; start_at: string; end_at: string; category: string; color: string; location?: string; recurrence_rule?: string; reminder_minutes?: number }
 export type Task = { id: number; title: string; notes?: string; due_at?: string; priority: 'low'|'medium'|'high'|'urgent'; status: 'todo'|'in_progress'|'done'|'cancelled'; estimate_minutes: number; energy: string; project?: string; reminder_at?: string; completed_at?: string }
 export type GoalStep = { id: number; title: string; order_index: number; due_date?: string; is_completed: boolean }
 export type Goal = { id: number; title: string; description?: string; horizon: string; target_date?: string; progress: number; status: string; steps: GoalStep[] }
@@ -34,3 +34,5 @@ export type EnergyPoint = { hour:number; level:number; kind:'peak'|'steady'|'dip
 export type EnergyFactor = { label:string; value:string; impact:string; tone:'positive'|'negative'|'neutral' }
 export type EnergyRecommendation = { time:string; title:string; body:string; kind:string }
 export type EnergyForecast = { date:string; score:number; status:string; peak_start:string; peak_end:string; points:EnergyPoint[]; factors:EnergyFactor[]; recommendations:EnergyRecommendation[] }
+export type NotificationItem = { id:number; kind:string; status:string; title:string; body:string; scheduled_at:string; sent_at?:string; read_at?:string }
+export type NotificationSummary = { unread:number; items:NotificationItem[] }

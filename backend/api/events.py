@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
@@ -6,6 +6,7 @@ from sqlalchemy import select
 from backend.api.deps import CurrentUser, DbSession
 from backend.models import Event
 from backend.schemas.events import EventCreate, EventResponse, EventUpdate
+from backend.services.recurrence import events_for_range
 from backend.services.time import to_utc
 
 router = APIRouter(prefix="/events", tags=["Calendar"])
@@ -20,12 +21,26 @@ def owned_event(db: DbSession, user_id: int, event_id: int) -> Event:
 
 @router.get("", response_model=list[EventResponse])
 def list_events(user: CurrentUser, db: DbSession, start: datetime | None = None, end: datetime | None = None):
+    if start is not None and end is not None:
+        range_start = to_utc(start, user.timezone)
+        range_end = to_utc(end, user.timezone)
+        if range_end <= range_start:
+            raise HTTPException(status_code=422, detail="end must be later than start")
+        if range_end - range_start > timedelta(days=366):
+            raise HTTPException(status_code=422, detail="Calendar range cannot exceed 366 days")
+        return events_for_range(db, user.id, range_start, range_end, user.timezone)
     query = select(Event).where(Event.user_id == user.id)
     if start:
         query = query.where(Event.end_at >= to_utc(start, user.timezone))
     if end:
         query = query.where(Event.start_at <= to_utc(end, user.timezone))
     return db.scalars(query.order_by(Event.start_at)).all()
+
+
+@router.get("/{event_id}", response_model=EventResponse)
+def get_event(event_id: int, user: CurrentUser, db: DbSession):
+    """Return the stored series. Occurrence edits are intentionally series-wide."""
+    return owned_event(db, user.id, event_id)
 
 
 @router.post("", response_model=EventResponse, status_code=status.HTTP_201_CREATED)

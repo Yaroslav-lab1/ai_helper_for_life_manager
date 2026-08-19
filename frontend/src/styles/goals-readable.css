@@ -1,0 +1,29 @@
+/* Goals: readable long-form planning */
+.goals-layout{grid-template-columns:minmax(0,1fr);gap:24px}
+.goal-card{container-type:inline-size;padding:26px}
+.goal-card-top{grid-template-columns:50px minmax(0,1fr) 42px;align-items:start;gap:15px}
+.goal-symbol{width:48px;height:48px;border-radius:14px}.goal-symbol svg{width:21px}
+.goal-title>span{font-size:10px;letter-spacing:.07em}.goal-title h3{margin:5px 0 7px;font-size:20px;line-height:1.35;letter-spacing:-.015em}.goal-title p{font-size:13px;line-height:1.65;color:var(--text-secondary)}
+.goal-progress{padding:22px 0}.goal-progress>div:first-child{font-size:13px}.goal-progress b{font-size:14px}.goal-progress .progress{height:8px;margin-top:11px}.goal-progress small{margin-top:9px;font-size:11px;color:var(--text-secondary)}
+.goal-ai-error{font-size:12px}.goal-ai-loading,.goal-ai-empty{margin-top:20px;padding:18px}.goal-ai-loading b,.goal-ai-empty b{font-size:13px}.goal-ai-loading span,.goal-ai-empty p{font-size:12px;line-height:1.6}.goal-ai-empty button{height:38px;padding:0 13px;font-size:11px}
+.goal-ai-plan{margin-top:22px;padding:22px;border-radius:14px}.goal-ai-plan>header span{gap:7px;font-size:11px;letter-spacing:.08em;font-weight:700}.goal-ai-plan>header svg{width:16px}.goal-ai-plan>header em{padding:6px 9px;font-size:10px}.goal-ai-plan>h4{max-width:74ch;margin-top:20px;font-size:19px;line-height:1.48;letter-spacing:-.012em}.goal-ai-plan>p{max-width:86ch;margin-top:9px;font-size:14px;line-height:1.72}
+.plan-diff{margin-top:16px;padding:13px 15px;border-left-width:3px}.plan-diff b{font-size:12px}.plan-diff span,.plan-diff small{margin-top:5px;font-size:11px;line-height:1.55}
+.plan-sections{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:19px;align-items:start}
+.plan-sections>details{overflow:hidden;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.plan-sections summary{min-height:50px;display:grid;grid-template-columns:minmax(0,1fr) auto 18px;align-items:center;gap:9px;padding:0 16px;list-style:none;cursor:pointer;color:var(--gold-light);user-select:none}
+.plan-sections summary::-webkit-details-marker{display:none}.plan-sections summary:hover{background:var(--surface-hover)}
+.plan-sections summary b{font-size:12px;text-transform:uppercase;letter-spacing:.08em}.plan-sections summary>span{min-width:25px;height:25px;display:grid;place-items:center;border:1px solid var(--border-gold);border-radius:13px;background:var(--gold-surface);color:var(--gold-light);font-size:10px;font-weight:700}.plan-sections summary svg{width:16px;transition:transform .18s ease}.plan-sections details[open] summary svg{transform:rotate(180deg)}
+.plan-sections article{grid-template-columns:20px minmax(0,1fr);gap:10px;padding:13px 16px}.plan-sections article>svg{width:16px;margin-top:2px}.plan-sections article span{font-size:13px;line-height:1.52;font-weight:600}.plan-sections article small{margin-top:5px;font-size:11px;line-height:1.55;font-weight:400;color:var(--text-secondary)}
+.plan-insights{gap:14px;margin-top:14px}.plan-insights>div{padding:16px;border-radius:11px}.plan-sections>div>b,.plan-insights b{margin-bottom:9px;font-size:11px;letter-spacing:.08em}.plan-insights p{gap:7px;margin-top:8px;font-size:12px;line-height:1.6}.plan-insights p svg{width:14px;margin-top:2px}.plan-insights>strong{padding:14px 16px;border-radius:10px;font-size:12px;line-height:1.55}.plan-insights>strong svg{width:15px}
+.goal-ai-plan>footer{gap:9px;margin-top:18px}.goal-ai-plan>footer button{min-height:38px;padding:0 13px;font-size:11px}
+.steps-head{padding-top:20px}.steps-head>b{font-size:14px}.goal-steps>button{gap:10px;padding:11px 0}.goal-steps>button i svg{width:18px}.goal-steps>button>span{font-size:13px;line-height:1.55}.goal-steps>button small{margin-top:4px;font-size:11px}
+
+@container (max-width:840px){
+  .plan-sections,.plan-insights{grid-template-columns:minmax(0,1fr)}
+  .plan-insights>strong{grid-column:auto}
+}
+@media(max-width:767px){
+  .goal-card{padding:18px}.goal-card-top{grid-template-columns:43px minmax(0,1fr) 38px;gap:11px}.goal-symbol{width:42px;height:42px}
+  .goal-title h3{font-size:17px}.goal-ai-plan{padding:16px}.goal-ai-plan>h4{font-size:17px}.goal-ai-plan>p{font-size:13px}
+  .goal-ai-plan>header{align-items:flex-start;gap:10px}.goal-ai-plan>footer button{flex:1 1 180px}
+}

@@ -9,9 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.config import get_settings
-from backend.models import BalanceAssessment, Event, Goal, Habit, Task, User
+from backend.models import BalanceAssessment, Goal, Habit, Task, User
 from backend.services.analytics import analytics_for_user, day_bounds, energy_for_user, overload_for_user
 from backend.services.habits import streak_stats
+from backend.services.recurrence import EventOccurrence, events_for_range
 from backend.services.time import in_timezone, local_datetime_utc, today_for
 
 
@@ -26,12 +27,7 @@ class UserContextService:
         start, end = day_bounds(selected_date, user.timezone)
         terms = {item for item in re.findall(r"[\wа-яё]+", question.lower()) if len(item) >= 4}
 
-        events = db.scalars(
-            select(Event)
-            .where(Event.user_id == user.id, Event.start_at < end, Event.end_at > start)
-            .order_by(Event.start_at)
-            .limit(20)
-        ).all()
+        events = events_for_range(db, user.id, start, end, user.timezone, limit=20)
         tasks = db.scalars(
             select(Task)
             .where(Task.user_id == user.id, Task.status.in_(["todo", "in_progress"]))
@@ -142,25 +138,43 @@ class UserContextService:
 
     @staticmethod
     def _free_intervals(
-        events: list[Event], day: date, start_at: time, end_at: time, timezone_name: str
+        events: list[EventOccurrence], day: date, start_at: time, end_at: time, timezone_name: str
     ) -> list[dict[str, Any]]:
-        cursor = local_datetime_utc(day, start_at, timezone_name)
-        boundary = local_datetime_utc(day, end_at, timezone_name)
-        result: list[dict[str, Any]] = []
+        work_start = local_datetime_utc(day, start_at, timezone_name)
+        work_end = local_datetime_utc(day, end_at, timezone_name)
+        if work_end <= work_start:
+            return []
+
+        busy: list[tuple[Any, Any]] = []
         for event in events:
-            event_start = max(cursor, event.start_at)
-            if event_start > cursor:
+            clipped_start = max(work_start, event.start_at)
+            clipped_end = min(work_end, event.end_at)
+            if clipped_start < clipped_end:
+                busy.append((clipped_start, clipped_end))
+        busy.sort(key=lambda interval: interval[0])
+
+        merged: list[tuple[Any, Any]] = []
+        for interval_start, interval_end in busy:
+            if merged and interval_start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], interval_end))
+            else:
+                merged.append((interval_start, interval_end))
+
+        cursor = work_start
+        result: list[dict[str, Any]] = []
+        for interval_start, interval_end in merged:
+            if interval_start > cursor:
                 result.append({
                     "start": in_timezone(cursor, timezone_name).isoformat(),
-                    "end": in_timezone(event_start, timezone_name).isoformat(),
-                    "duration_minutes": int((event_start - cursor).total_seconds() / 60),
+                    "end": in_timezone(interval_start, timezone_name).isoformat(),
+                    "duration_minutes": int((interval_start - cursor).total_seconds() / 60),
                 })
-            cursor = max(cursor, event.end_at)
-        if cursor < boundary:
+            cursor = max(cursor, interval_end)
+        if cursor < work_end:
             result.append({
                 "start": in_timezone(cursor, timezone_name).isoformat(),
-                "end": in_timezone(boundary, timezone_name).isoformat(),
-                "duration_minutes": int((boundary - cursor).total_seconds() / 60),
+                "end": in_timezone(work_end, timezone_name).isoformat(),
+                "duration_minutes": int((work_end - cursor).total_seconds() / 60),
             })
         return result[:10]
 
