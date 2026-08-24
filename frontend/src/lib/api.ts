@@ -43,7 +43,12 @@ export async function api<T>(path: string, options: RequestInit = {}, retry = tr
   if (response.status === 401 && retry && await renew()) return api<T>(path, options, false)
   if (!response.ok) {
     let message = 'Не удалось выполнить запрос'
-    try { const payload = await response.json(); message = payload.detail || message } catch { /* empty response */ }
+    try {
+      const payload = await response.json()
+      const detail = payload.detail
+      if(typeof detail === 'string')message=detail
+      else if(detail && typeof detail.message === 'string')message=detail.message
+    } catch { /* empty response */ }
     throw new Error(typeof message === 'string' ? message : 'Проверьте введённые данные')
   }
   if (response.status === 204) return undefined as T

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BarChart3, CalendarDays, ChevronRight, Diamond, Goal, LayoutDashboard, Sparkles, Target } from 'lucide-react'
 import { api, session } from './lib/api'
-import type { CalendarView, Settings, Tokens, User } from './types'
+import type { CalendarView, Settings, Subscription, Tokens, User } from './types'
 import { AnalyticsPage, GoalsPage, HabitsPage, SettingsPage, TasksPage } from './components/Pages'
 import PremiumDashboardPage from './components/PremiumDashboard'
 import PremiumCalendarPage from './components/PremiumCalendar'
@@ -10,11 +10,12 @@ import { PrivacyPolicy } from './components/PrivacyPolicy'
 import { RequisitesPage } from './components/RequisitesPage'
 import { LEGAL_DETAILS } from './legal'
 import { bindTheme, persistTheme, storedTheme, type ThemePreference } from './lib/theme'
+import { BillingPage, BillingReturnPage, SubscriptionUpsell } from './components/BillingPage'
 
-export type Page = 'dashboard'|'calendar'|'tasks'|'goals'|'habits'|'analytics'|'settings'
-type SiteRoute = 'app'|'requisites'
+export type Page = 'dashboard'|'calendar'|'tasks'|'goals'|'habits'|'analytics'|'settings'|'billing'
+type SiteRoute = 'app'|'requisites'|'billingReturn'
 
-const routeFromLocation=():SiteRoute=>window.location.pathname.replace(/\/$/,'')==='/requisites'?'requisites':'app'
+const routeFromLocation=():SiteRoute=>{const path=window.location.pathname.replace(/\/$/,'');return path==='/requisites'?'requisites':path==='/billing/return'?'billingReturn':'app'}
 
 const mobileNav:{id:Page;label:string;icon:typeof LayoutDashboard}[]=[
   {id:'dashboard',label:'Главная',icon:LayoutDashboard},
@@ -31,6 +32,8 @@ export default function App() {
   const [page,setPage]=useState<Page>('dashboard')
   const [menu,setMenu]=useState(false)
   const [assistant,setAssistant]=useState(false)
+  const [subscription,setSubscription]=useState<Subscription|null>(null)
+  const [upsell,setUpsell]=useState<string|null>(null)
   const [refreshKey,setRefreshKey]=useState(0)
   const [theme,setThemeState]=useState<ThemePreference>(()=>storedTheme())
   const [calendarView,setCalendarViewState]=useState<CalendarView>(()=>{
@@ -39,8 +42,9 @@ export default function App() {
   })
 
   useEffect(()=>bindTheme(theme),[theme])
-  useEffect(()=>{const open=()=>setAssistant(true);window.addEventListener('axel:open-ai',open);return()=>window.removeEventListener('axel:open-ai',open)},[])
-  useEffect(()=>{if(!session.access){setChecking(false);return}Promise.all([api<User>('/auth/me'),api<Settings>('/settings')]).then(([currentUser,currentSettings])=>{setUser(currentUser);setTheme(currentSettings.theme as ThemePreference)}).catch(()=>session.clear()).finally(()=>setChecking(false))},[])
+  useEffect(()=>{const open=()=>subscription?.entitlements.includes('ai_assistant')?setAssistant(true):setUpsell('PRO');window.addEventListener('axel:open-ai',open);return()=>window.removeEventListener('axel:open-ai',open)},[subscription])
+  useEffect(()=>{const open=()=>setUpsell('PRO');window.addEventListener('axel:subscription-upsell',open);return()=>window.removeEventListener('axel:subscription-upsell',open)},[])
+  useEffect(()=>{if(!session.access){setChecking(false);return}Promise.all([api<User>('/auth/me'),api<Settings>('/settings')]).then(([currentUser,currentSettings])=>{setUser(currentUser);setTheme(currentSettings.theme as ThemePreference);void api<Subscription>('/billing/subscription').then(setSubscription).catch(()=>undefined)}).catch(()=>session.clear()).finally(()=>setChecking(false))},[])
   useEffect(()=>{const syncRoute=()=>setRoute(routeFromLocation());window.addEventListener('popstate',syncRoute);return()=>window.removeEventListener('popstate',syncRoute)},[])
 
   const openRequisites=()=>{
@@ -58,32 +62,38 @@ export default function App() {
   }
   if(route==='requisites')return <RequisitesPage onBack={closeRequisites}/>
   const setTheme=(next:ThemePreference)=>{persistTheme(next);setThemeState(next)}
-  const authenticated=(tokens:Tokens)=>{session.save(tokens);setUser(tokens.user);void api<Settings>('/settings').then(current=>setTheme(current.theme as ThemePreference))}
-  const logout=()=>{void api('/auth/logout',{method:'POST'}).catch(()=>undefined).finally(()=>{session.clear();setUser(null);setMenu(false)})}
+  const authenticated=(tokens:Tokens)=>{session.save(tokens);setUser(tokens.user);void api<Settings>('/settings').then(current=>setTheme(current.theme as ThemePreference));void api<Subscription>('/billing/subscription').then(setSubscription).catch(()=>undefined)}
+  const logout=()=>{void api('/auth/logout',{method:'POST'}).catch(()=>undefined).finally(()=>{session.clear();setUser(null);setSubscription(null);setMenu(false)})}
   const navigate=(next:Page)=>{setPage(next);setMenu(false);window.scrollTo({top:0,behavior:'smooth'})}
   const changed=()=>setRefreshKey(value=>value+1)
   const setCalendarView=(view:CalendarView)=>{setCalendarViewState(view);localStorage.setItem('axel_calendar_view',view)}
 
   if(checking)return <div className="app-loader"><Logo/><span>Собираем ваш день…</span></div>
   if(!user)return <AuthScreen onAuth={authenticated} onRequisites={openRequisites}/>
+  const has=(feature:string)=>Boolean(subscription?.entitlements.includes(feature))
+  const requestAI=()=>{if(has('ai_assistant'))setAssistant(true);else setUpsell('PRO')}
+  const openBilling=()=>{window.history.replaceState({},'', '/');setRoute('app');setPage('billing');setUpsell(null);setMenu(false);setAssistant(false);window.scrollTo({top:0})}
+  if(route==='billingReturn')return <BillingReturnPage onSubscription={setSubscription} onOpenBilling={openBilling}/>
 
   const pages:Record<Exclude<Page,'calendar'>,React.ReactNode>={
     dashboard:<PremiumDashboardPage key={`d${refreshKey}`} timezone={user.timezone} navigate={navigate} onChanged={changed}/>,
     tasks:<TasksPage key={`t${refreshKey}`} timezone={user.timezone} onChanged={changed}/>,
-    goals:<GoalsPage key={`g${refreshKey}`} timezone={user.timezone} onChanged={changed}/>,
+    goals:<GoalsPage key={`g${refreshKey}`} timezone={user.timezone} onChanged={changed} canUseAI={has('smart_goal_planning')}/>,
     habits:<HabitsPage key={`h${refreshKey}`} timezone={user.timezone} onChanged={changed}/>,
-    analytics:<AnalyticsPage key={`a${refreshKey}`} timezone={user.timezone}/>,
-    settings:<SettingsPage user={user} onUser={setUser} onTheme={setTheme}/>,
+    analytics:<AnalyticsPage key={`a${refreshKey}`} timezone={user.timezone} canUseRecommendations={has('personal_recommendations')}/>,
+    settings:<SettingsPage user={user} onUser={setUser} onTheme={setTheme} subscription={subscription} onBilling={openBilling}/>,
+    billing:<BillingPage subscription={subscription} onSubscription={setSubscription}/>,
   }
   return <div className={`app-shell ${page==='calendar'?'calendar-mode':''}`}>
-    <AppHeader page={page} user={user} calendarView={calendarView} onCalendarView={setCalendarView} onMenu={()=>setMenu(true)} onAssistant={()=>setAssistant(true)} onHome={()=>navigate('dashboard')}/>
-    <Sidebar page={page} user={user} open={menu} navigate={navigate} onClose={()=>setMenu(false)} onLogout={logout} onAssistant={()=>setAssistant(true)} onRequisites={openRequisites}/>
-    {page==='calendar'?<PremiumCalendarPage key={`c${refreshKey}`} view={calendarView} onView={setCalendarView} plannerOpen={assistant} onPlannerOpen={()=>setAssistant(true)} onPlannerClose={()=>setAssistant(false)} onChanged={changed}/>:<>
+    <AppHeader page={page} user={user} calendarView={calendarView} onCalendarView={setCalendarView} onMenu={()=>setMenu(true)} onAssistant={requestAI} onHome={()=>navigate('dashboard')}/>
+    <Sidebar page={page} user={user} open={menu} navigate={navigate} onClose={()=>setMenu(false)} onLogout={logout} onAssistant={requestAI} onRequisites={openRequisites}/>
+    {page==='calendar'?<PremiumCalendarPage key={`c${refreshKey}`} view={calendarView} onView={setCalendarView} plannerOpen={assistant} onPlannerOpen={requestAI} onPlannerClose={()=>setAssistant(false)} onChanged={changed} canUseAI={has('ai_day_planning')}/>:<>
       <main className="workspace-main">{pages[page as Exclude<Page,'calendar'>]}</main>
       <AIAssistantPanel open={assistant} onClose={()=>setAssistant(false)}/>
     </>}
     <MobileScrim visible={menu||assistant} onClick={()=>{setMenu(false);setAssistant(false)}}/>
     <nav className="mobile-nav premium-mobile-nav">{mobileNav.map(item=><button key={item.id} className={page===item.id?'active':''} onClick={()=>navigate(item.id)}><item.icon/><span>{item.label}</span></button>)}</nav>
+    {upsell&&<SubscriptionUpsell requiredPlan={upsell} onClose={()=>setUpsell(null)} onOpen={openBilling}/>}
   </div>
 }
 

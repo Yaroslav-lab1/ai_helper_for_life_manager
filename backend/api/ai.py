@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
@@ -24,10 +25,12 @@ from backend.api.deps import CurrentUser, DbSession
 from backend.database import SessionLocal
 from backend.models import AIActionProposal, AIConversation, AIMessage, User
 from backend.services.privacy import require_ai_context_consent
+from backend.billing.entitlements import require_entitlement
 
 
 router = APIRouter(prefix="/ai", tags=["AI chat"])
 logger = logging.getLogger(__name__)
+AIAssistantUser = Annotated[User, Depends(require_entitlement("ai_assistant"))]
 
 
 def _service() -> ChatService:
@@ -56,7 +59,7 @@ async def ai_status(user: CurrentUser):
 
 
 @router.post("/chat")
-async def chat(payload: ChatRequest, request: Request, user: CurrentUser, db: DbSession):
+async def chat(payload: ChatRequest, request: Request, user: AIAssistantUser, db: DbSession):
     require_ai_context_consent(user)
     try:
         service = _service()
@@ -115,7 +118,7 @@ def conversations(user: CurrentUser, db: DbSession):
 
 
 @router.post("/conversations", response_model=ConversationResponse, status_code=status.HTTP_201_CREATED)
-def new_conversation(payload: ConversationCreate, user: CurrentUser, db: DbSession):
+def new_conversation(payload: ConversationCreate, user: AIAssistantUser, db: DbSession):
     return ChatService.create_conversation(db, user.id, payload.title)
 
 
@@ -164,7 +167,7 @@ def _owned_proposal(db: DbSession, user_id: int, proposal_id: int) -> AIActionPr
 
 @router.patch("/action-proposals/{proposal_id}", response_model=ActionProposalResponse)
 def edit_proposal(
-    proposal_id: int, payload: ActionProposalUpdate, user: CurrentUser, db: DbSession
+    proposal_id: int, payload: ActionProposalUpdate, user: AIAssistantUser, db: DbSession
 ):
     proposal = _owned_proposal(db, user.id, proposal_id)
     if proposal.status != "pending":
@@ -179,7 +182,7 @@ def edit_proposal(
 
 
 @router.post("/action-proposals/{proposal_id}/confirm", response_model=ActionProposalResponse)
-def confirm_proposal(proposal_id: int, user: CurrentUser, db: DbSession):
+def confirm_proposal(proposal_id: int, user: AIAssistantUser, db: DbSession):
     proposal = _owned_proposal(db, user.id, proposal_id)
     if proposal.status != "pending":
         raise HTTPException(status_code=409, detail="Предложение уже обработано")

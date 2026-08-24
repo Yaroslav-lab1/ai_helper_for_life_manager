@@ -13,6 +13,7 @@ from backend.config import settings
 from backend.schemas.common import HealthResponse
 from backend.services.time import utc_now
 from backend.services.notifications import NotificationWorker
+from backend.billing.worker import SubscriptionWorker
 
 
 @asynccontextmanager
@@ -20,6 +21,8 @@ async def lifespan(_: FastAPI):
     settings.validate_runtime()
     worker = NotificationWorker() if settings.notification_worker_enabled else None
     worker_task = asyncio.create_task(worker.run()) if worker else None
+    subscription_worker = SubscriptionWorker() if settings.yookassa_enabled else None
+    subscription_task = asyncio.create_task(subscription_worker.run()) if subscription_worker else None
     try:
         yield
     finally:
@@ -31,6 +34,14 @@ async def lifespan(_: FastAPI):
                 worker_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await worker_task
+        if subscription_worker and subscription_task:
+            subscription_worker.stop()
+            try:
+                await asyncio.wait_for(subscription_task, timeout=20)
+            except TimeoutError:
+                subscription_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await subscription_task
 
 app = FastAPI(
     title=settings.app_name,
@@ -46,6 +57,7 @@ app = FastAPI(
         {"name": "Habits", "description": "Habit check-ins and streak calculation"},
         {"name": "Insights & AI", "description": "Balance, analytics, recommendations and overload warnings"},
         {"name": "AI chat", "description": "Persistent context-aware streaming chat"},
+        {"name": "Billing & subscriptions", "description": "Tariffs, YooKassa checkout and subscription lifecycle"},
     ],
 )
 app.add_middleware(

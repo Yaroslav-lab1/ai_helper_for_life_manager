@@ -22,6 +22,8 @@ from backend.models import (
     Recommendation,
     NotificationDelivery,
     Task,
+    UserSubscription,
+    BillingPayment,
 )
 from backend.schemas.account import AccountDeleteRequest
 from backend.services.security import revoke_all_sessions, verify_password
@@ -45,6 +47,7 @@ def export_account(user: CurrentUser, db: DbSession):
     habits = db.scalars(select(Habit).where(Habit.user_id == user.id)).all()
     conversations = db.scalars(select(AIConversation).where(AIConversation.user_id == user.id)).all()
     plans = db.scalars(select(GoalPlan).where(GoalPlan.user_id == user.id)).all()
+    subscription = db.scalar(select(UserSubscription).where(UserSubscription.user_id == user.id))
     payload = {
         "schema_version": "1",
         "exported_at": utc_now(),
@@ -81,6 +84,16 @@ def export_account(user: CurrentUser, db: DbSession):
             _row(item, exclude={"last_error", "locked_by"})
             for item in db.scalars(
                 select(NotificationDelivery).where(NotificationDelivery.user_id == user.id)
+            ).all()
+        ],
+        "subscription": _row(subscription, exclude={"yookassa_payment_method_id"}) if subscription else None,
+        "billing_payments": [
+            _row(
+                item,
+                exclude={"confirmation_url", "idempotence_key"},
+            )
+            for item in db.scalars(
+                select(BillingPayment).where(BillingPayment.user_id == user.id)
             ).all()
         ],
     }

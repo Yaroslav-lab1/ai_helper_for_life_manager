@@ -1,6 +1,7 @@
 from datetime import date
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 
 from backend.ai import generate_recommendations
@@ -18,8 +19,13 @@ from backend.schemas.insights import (
 )
 from backend.services.analytics import analytics_for_user, dashboard_for_user, energy_for_user, overload_for_user
 from backend.services.time import today_for
+from backend.billing.entitlements import has_entitlement, require_entitlement
+from backend.models import User
 
 router = APIRouter(tags=["Insights & AI"])
+OverloadUser = Annotated[User, Depends(require_entitlement("overload_analysis"))]
+RecommendationUser = Annotated[User, Depends(require_entitlement("personal_recommendations"))]
+DayPlanningUser = Annotated[User, Depends(require_entitlement("ai_day_planning"))]
 
 BALANCE_LABELS = {
     "health": "Здоровье", "career": "Карьера", "finance": "Финансы", "relationships": "Отношения",
@@ -36,7 +42,7 @@ def balance_dict(item: BalanceAssessment) -> dict:
 def dashboard(user: CurrentUser, db: DbSession):
     result = dashboard_for_user(db, user)
     rec = db.scalar(select(Recommendation).where(Recommendation.user_id == user.id, Recommendation.status == "new").order_by(Recommendation.created_at.desc()))
-    if rec:
+    if rec and has_entitlement(user, "personal_recommendations", db):
         result["recommendation"] = {"id": rec.id, "kind": rec.kind, "title": rec.title, "body": rec.body, "action": rec.action}
     return result
 
@@ -47,12 +53,12 @@ def analytics(user: CurrentUser, db: DbSession, days: int = Query(default=30, ge
 
 
 @router.get("/overload", response_model=OverloadResponse)
-def overload(user: CurrentUser, db: DbSession):
+def overload(user: OverloadUser, db: DbSession):
     return overload_for_user(db, user.id, timezone_name=user.timezone)
 
 
 @router.get("/energy", response_model=EnergyResponse)
-def energy(user: CurrentUser, db: DbSession, target_date: date | None = Query(default=None, alias="date")):
+def energy(user: DayPlanningUser, db: DbSession, target_date: date | None = Query(default=None, alias="date")):
     return energy_for_user(db, user.id, target_date or today_for(user.timezone), user.timezone)
 
 
@@ -74,7 +80,7 @@ def list_balance(user: CurrentUser, db: DbSession):
 
 
 @router.post("/recommendations/generate", response_model=list[RecommendationResponse])
-def generate(user: CurrentUser, db: DbSession):
+def generate(user: RecommendationUser, db: DbSession):
     analytics = analytics_for_user(db, user.id, 30, user.timezone)
     overload = overload_for_user(db, user.id, timezone_name=user.timezone)
     latest = db.scalar(select(BalanceAssessment).where(BalanceAssessment.user_id == user.id).order_by(BalanceAssessment.assessment_date.desc()))
@@ -91,12 +97,12 @@ def generate(user: CurrentUser, db: DbSession):
 
 
 @router.get("/recommendations", response_model=list[RecommendationResponse])
-def list_recommendations(user: CurrentUser, db: DbSession):
+def list_recommendations(user: RecommendationUser, db: DbSession):
     return db.scalars(select(Recommendation).where(Recommendation.user_id == user.id).order_by(Recommendation.created_at.desc()).limit(30)).all()
 
 
 @router.patch("/recommendations/{recommendation_id}", response_model=RecommendationResponse)
-def update_recommendation(recommendation_id: int, payload: RecommendationUpdate, user: CurrentUser, db: DbSession):
+def update_recommendation(recommendation_id: int, payload: RecommendationUpdate, user: RecommendationUser, db: DbSession):
     item = db.scalar(select(Recommendation).where(Recommendation.id == recommendation_id, Recommendation.user_id == user.id))
     if not item:
         raise HTTPException(status_code=404, detail="Recommendation not found")

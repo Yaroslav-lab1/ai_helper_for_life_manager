@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from backend.config import Settings, settings
 from backend.database import SessionLocal
 from backend.database.seed import seed_demo
-from backend.models import AuthSession, Event, Task, User
+from backend.models import AuthSession, Event, Task, User, UserSubscription
 from backend.services.rate_limit import limiter
 from backend.services.time import day_bounds_utc
 
@@ -221,6 +221,14 @@ def test_export_is_user_scoped_and_delete_requires_password(client: TestClient):
 def test_gigachat_consent_is_versioned_enforced_and_revocable(client: TestClient):
     created = register(client).json()
     headers = {"Authorization": f"Bearer {created['access_token']}"}
+    with SessionLocal() as db:
+        subscription = db.get(UserSubscription, created["user"]["id"])
+        subscription.plan_code = "pro"
+        subscription.billing_interval = "monthly"
+        subscription.status = "active"
+        subscription.current_period_start = datetime.now(UTC)
+        subscription.current_period_end = datetime.now(UTC) + timedelta(days=30)
+        db.commit()
     previous = settings.llm_provider
     settings.llm_provider = "gigachat"
     try:

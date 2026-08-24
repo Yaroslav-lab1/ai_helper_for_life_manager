@@ -1,0 +1,63 @@
+.calendar-workspace {
+  grid-template-columns: 230px minmax(0, 1fr);
+  transition: grid-template-columns 0.2s ease;
+}
+
+.calendar-workspace.planner-open {
+  grid-template-columns: 230px minmax(0, 1fr) 328px;
+}
+
+.planner-close {
+  display: grid;
+}
+
+@media (max-width: 1199px) {
+  .calendar-toolbar .calendar-ai-trigger {
+    width: auto;
+    min-width: 88px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    white-space: nowrap;
+  }
+
+  .calendar-toolbar .calendar-ai-trigger svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+  }
+}
+
+/* On wide layouts the AI panel is a regular workspace column. Rendering the
+   mobile scrim there puts an invisible click-blocking layer above the panel. */
+@media (min-width: 1200px) {
+  .premium-scrim {
+    display: none;
+  }
+}
+
+@media (min-width: 1200px) {
+  .calendar-workspace {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .calendar-workspace.planner-open {
+    grid-template-columns: 240px minmax(0, 1fr) 360px;
+  }
+}
+
+@media (max-width: 1199px) {
+  .calendar-workspace,
+  .calendar-workspace.planner-open {
+    grid-template-columns: 216px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 899px) {
+  .calendar-workspace,
+  .calendar-workspace.planner-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

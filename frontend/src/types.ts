@@ -36,3 +36,24 @@ export type EnergyRecommendation = { time:string; title:string; body:string; kin
 export type EnergyForecast = { date:string; score:number; status:string; peak_start:string; peak_end:string; points:EnergyPoint[]; factors:EnergyFactor[]; recommendations:EnergyRecommendation[] }
 export type NotificationItem = { id:number; kind:string; status:string; title:string; body:string; scheduled_at:string; sent_at?:string; read_at?:string }
 export type NotificationSummary = { unread:number; items:NotificationItem[] }
+export type BillingInterval = 'monthly'|'yearly'
+export type PlanCode = 'free'|'pro'|'executive'
+export type BillingPlan = {
+  code:PlanCode;name:string;available:boolean;currency:string;monthly_price:string;yearly_price:string
+  yearly_monthly_equivalent:string;yearly_savings:string;yearly_discount_percent:number
+  features:string[];entitlements:string[]
+}
+export type BillingCatalog = {
+  plans:BillingPlan[];checkout_available:boolean;checkout_unavailable_message:string|null
+}
+export type Subscription = {
+  plan_code:PlanCode;billing_interval?:BillingInterval;status:string;effective_plan_code:PlanCode
+  entitlements:string[];current_period_start?:string;current_period_end?:string;cancel_at_period_end:boolean
+  next_billing_at?:string;access_until?:string;scheduled_plan_code?:PlanCode;scheduled_billing_interval?:BillingInterval
+  scheduled_change_at?:string;retry_count:number;next_retry_at?:string
+}
+export type BillingPayment = {
+  id:number;kind:string;plan_code:PlanCode;plan_name:string;billing_interval:BillingInterval
+  amount:string;currency:string;status:string;confirmation_url?:string;paid_at?:string;canceled_at?:string;failure_code?:string
+}
+export type BillingAction = {subscription:Subscription;message:string}

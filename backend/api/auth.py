@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from backend.api.deps import CurrentUser, DbSession
 from backend.config import settings
-from backend.models import User, UserSettings
+from backend.models import User, UserSettings, UserSubscription
 from backend.schemas.auth import (
     EmailRequest,
     LoginRequest,
@@ -102,6 +102,7 @@ def register(payload: UserCreate, request: Request, response: Response, db: DbSe
     db.add(user)
     db.flush()
     db.add(UserSettings(user_id=user.id))
+    db.add(UserSubscription(user_id=user.id, plan_code="free", status="free"))
     verification_token = create_one_time_token(db, user, "verify_email")
     pair = _new_token_pair(db, user, response)
     _send_safely(send_verification_email, user.email, verification_token)

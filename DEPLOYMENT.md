@@ -231,6 +231,26 @@ GIGACHAT_SCOPE=GIGACHAT_API_PERS
 GIGACHAT_VERIFY_SSL=true
 
 PRIVACY_POLICY_VERSION=2026-08-17
+
+# Сначала включайте только с credentials тестового магазина.
+YOOKASSA_ENABLED=false
+YOOKASSA_SHOP_ID=
+YOOKASSA_SECRET_KEY=
+YOOKASSA_RETURN_URL=https://app.example.com/billing/return
+YOOKASSA_CURRENCY=RUB
+YOOKASSA_CAPTURE=true
+YOOKASSA_WEBHOOK_IP_CHECK_ENABLED=true
+YOOKASSA_REQUEST_TIMEOUT_SECONDS=30
+YOOKASSA_RECEIPT_MODE=disabled
+YOOKASSA_VAT_CODE=
+YOOKASSA_TAX_SYSTEM_CODE=
+YOOKASSA_PAYMENT_SUBJECT=service
+YOOKASSA_PAYMENT_MODE=full_payment
+SUBSCRIPTION_GRACE_PERIOD_DAYS=3
+SUBSCRIPTION_RETRY_DELAYS_HOURS=24,72
+SUBSCRIPTION_WORKER_POLL_INTERVAL_SECONDS=300
+SUBSCRIPTION_WORKER_BATCH_SIZE=20
+EXECUTIVE_PLAN_ENABLED=true
 ```
 
 Правила:
@@ -240,6 +260,7 @@ PRIVACY_POLICY_VERSION=2026-08-17
 - не используйте значения из `.env.example` как production-секреты;
 - не отправляйте `.env` в Git, мессенджеры или баг-трекер;
 - при смене версии privacy policy обновляйте `PRIVACY_POLICY_VERSION`.
+- секрет ЮKassa храните только в backend `.env`; переменных `VITE_YOOKASSA_*` в проекте быть не должно.
 
 Проверьте права:
 
@@ -423,3 +444,96 @@ Production считается готовым, когда:
 - demo seed выключен;
 - backup создан и тестово восстановлен;
 - политика конфиденциальности заполнена реальными реквизитами.
+
+## 18. Настроить ЮKassa и проверить платежи
+
+Интеграция в коде не означает готовность к реальным списаниям. До production-запуска владелец магазина должен завершить договорные, фискальные и кабинетные настройки и провести успешный тестовый платёж.
+
+### 18.1. Создать и настроить магазин
+
+1. Зарегистрируйте магазин в [личном кабинете ЮKassa](https://yookassa.ru/my/).
+2. В разделе «Настройки — Магазин» скопируйте `shopId` тестового магазина.
+3. В разделе «Интеграция — Ключи API» получите секретный ключ тестового магазина. Не отправляйте его в Git, frontend, логи или мессенджеры.
+4. Запишите тестовые значения в закрытый `.env`, установите `YOOKASSA_ENABLED=true` и перезапустите backend.
+5. Убедитесь, что `YOOKASSA_RETURN_URL=https://app.example.com/billing/return` открывается через текущий frontend. Return URL не является доказательством оплаты.
+
+ЮKassa использует HTTP Basic Auth: `shopId` как username и secret key как password. Каждый POST получает Idempotence-Key не длиннее 64 символов. Axel One использует `checkout:<payment_id>` и `renewal:<subscription_id>:<period_start>` и при сетевом повторе сохраняет тот же ключ. См. [формат взаимодействия](https://yookassa.ru/developers/using-api/interaction-format).
+
+### 18.2. Настроить HTTPS webhook
+
+В разделе «Интеграция — HTTP-уведомления» укажите:
+
+```text
+https://app.example.com/api/v1/billing/yookassa/webhook
+```
+
+Включите события:
+
+- `payment.succeeded`;
+- `payment.canceled`;
+- `payment.waiting_for_capture`;
+- `refund.succeeded`.
+
+Для Basic Auth webhook настраивается именно в кабинете, не через API. ЮKassa требует HTTPS и порт 443 либо 8443. Axel One отвечает `200` после успешно обработанного или уже обработанного уведомления. Подлинность проверяется по реальному IP с учётом `TRUSTED_PROXIES` и повторным `GET` объекта платежа в ЮKassa; список сетей взят из [официальной документации webhook](https://yookassa.ru/developers/using-api/webhooks). Не отключайте `YOOKASSA_WEBHOOK_IP_CHECK_ENABLED` в production. При CDN/load balancer добавьте только его реальные адреса в `TRUSTED_PROXIES`, иначе `X-Forwarded-For` не будет принят.
+
+### 18.3. Выбрать законный режим чеков
+
+Не переносите настройки НДС из примера без проверки статуса продавца, договора с ЮKassa и консультации бухгалтера/юриста.
+
+- `YOOKASSA_RECEIPT_MODE=54fz`: Axel One добавляет `receipt.customer` и одну позицию услуги. Обязательны подтверждённые `YOOKASSA_VAT_CODE` и `YOOKASSA_TAX_SYSTEM_CODE`; subject/mode задаются явно.
+- `YOOKASSA_RECEIPT_MODE=external`: чек формируется внешней системой; Axel One не отправляет `receipt` в запросе платежа.
+- `YOOKASSA_RECEIPT_MODE=disabled`: Axel One не формирует чек. Используйте только если владелец документированно подтвердил, что чек в этом контуре не требуется или формируется отдельно.
+- `self_employed`: legacy-значение, которое startup-валидация отклоняет. В [истории изменений ЮKassa](https://yookassa.ru/developers/using-api/changelog) указано прекращение сервиса чеков для самозанятых с 29 декабря 2025 года. Для Axel One как сервиса самозанятого требуется актуальная внешняя схема (например, согласованный процесс через «Мой налог»), а не автоматическое применение параметров 54-ФЗ.
+
+Общие сведения о чеках: [официальная документация ЮKassa](https://yookassa.ru/developers/payment-acceptance/receipts/basics).
+
+### 18.4. Провести тестовый платёж
+
+1. Сделайте backup тестовой БД и примените `alembic upgrade head`.
+2. Войдите новым пользователем: в разделе «Подписка» должен быть FREE.
+3. Выберите PRO monthly. Проверьте в DevTools, что browser отправляет только `plan_code` и `billing_interval`, а ответ содержит внутренний `payment_id` и HTTPS `confirmation_url`.
+4. Завершите оплату тестовыми данными из кабинета ЮKassa.
+5. На `/billing/return` сначала допустим статус pending. Тариф должен включиться только после проверенного `payment.succeeded`.
+6. В БД проверьте одну запись `billing_payments`, одну обработанную запись `billing_webhook_events` и активную `user_subscriptions`. Не копируйте confirmation URL и provider payload в тикеты.
+7. Повторно доставьте то же уведомление из кабинета: период не должен продвинуться второй раз.
+8. Проведите отменённый тестовый платёж и убедитесь, что платный доступ не выдан.
+
+### 18.5. Проверить автопродление и отмену
+
+Первый платеж запрашивает `save_payment_method=true`. Автопродление использует только подтверждённый сохранённый `payment_method.id`; расписанием управляет Axel One, как требует [сценарий повторных платежей](https://yookassa.ru/developers/payment-acceptance/scenario-extensions/recurring-payments/pay-with-saved).
+
+На staging:
+
+1. Убедитесь, что у активной подписки сохранён непустой method ID и `current_period_end` timezone-aware UTC.
+2. Сдвиньте период только в отдельной тестовой БД либо используйте специально созданную тестовую подписку.
+3. Запустите один цикл `python -c 'from backend.billing.worker import run_subscription_cycle; print(run_subscription_cycle())'`.
+4. Повторите цикл параллельно из двух процессов: уникальный renewal периода и условный claim не должны дать два списания.
+5. Смоделируйте отменённый provider payment: статус станет `past_due`, пользователь получит outbox-уведомление, а доступ сохранится на `SUBSCRIPTION_GRACE_PERIOD_DAYS`.
+6. Проверьте configured retry delays и перевод на FREE после их исчерпания.
+7. Нажмите «Отменить автопродление»: доступ остаётся до `current_period_end`, нового платежа нет. Затем проверьте «Возобновить подписку» до даты окончания.
+
+### 18.6. Перейти на production credentials
+
+1. Завершите активацию настоящего магазина и согласуйте способы оплаты/автоплатежи/чеки.
+2. Выпустите production secret key в кабинете и замените тестовый ключ только в защищённом `.env`/secret store.
+3. Проверьте production shopId, HTTPS return URL и webhook URL.
+4. Выполните `docker compose ... config --quiet`, затем запустите backend. Startup остановится при пустом/тестовом ключе, HTTP return URL или несогласованной фискализации.
+5. Проведите один контролируемый платёж минимально допустимого выбранного тарифа и сверку в кабинете, приложении и банковской выписке.
+
+Production нельзя считать готовым, пока не подтверждены production shopId, события webhook, режим чеков и успешный тестовый платёж.
+
+### 18.7. Безопасно ротировать secret key
+
+1. Остановите создание новых платежей (`YOOKASSA_ENABLED=false`) в короткое согласованное окно; уже оплаченный доступ в БД не исчезает.
+2. Выпустите новый ключ в кабинете, сохраните его в secret store и перезапустите backend.
+3. Выполните безопасный `GET`/тестовый checkout и проверьте webhook.
+4. Только после проверки отзовите старый ключ в кабинете.
+5. Никогда не печатайте ключ командами, которые попадут в shell history или CI log.
+
+### 18.8. Ручная сверка спорного платежа
+
+1. Найдите внутренний платёж только по user-scoped admin/support-процессу и выпишите внутренний ID, provider payment ID, snapshot суммы/валюты/тарифа и timestamps. Не выгружайте реквизиты карты.
+2. Получите объект платежа напрямую через API/кабинет ЮKassa и сравните ID, status, paid, amount, currency и metadata.
+3. Проверьте `billing_webhook_events`: `failed` можно безопасно повторно доставить после устранения причины; `processed` не должен активировать период повторно.
+4. Если данные не совпадают, не меняйте статус SQL-командой. Остановите автопродление конкретной подписки, сохраните аудит и разберите расхождение с поддержкой ЮKassa.
+5. При полном возврате текущая политика Axel One сохраняет оплаченный доступ до конца периода и выключает следующее автопродление. Любое иное правило требует отдельного продуктового и юридического решения и новых тестов.

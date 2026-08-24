@@ -45,6 +45,12 @@ class User(Base):
     notification_deliveries: Mapped[list[NotificationDelivery]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    subscription: Mapped["UserSubscription | None"] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
+    billing_payments: Mapped[list["BillingPayment"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
     @property
     def email_verified(self) -> bool:

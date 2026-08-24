@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CalendarPlus, ChevronLeft, ChevronRight, Clock3, MapPin, Pencil, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, CalendarPlus, ChevronLeft, ChevronRight, Clock3, MapPin, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { api } from '../lib/api'
 import type { CalendarView, EnergyForecast, EventItem } from '../types'
 import { Loading, Modal } from './UI'
@@ -56,14 +56,14 @@ function EventDetailsModal({event,onClose,onEdit,onDelete}:{event:EventItem;onCl
 }
 const BadgeLike=({children,tone}:{children:React.ReactNode;tone:string})=><span className={`badge badge-${tone}`}>{children}</span>
 
-export default function PremiumCalendarPage({view,onView,plannerOpen,onPlannerOpen,onPlannerClose,onChanged}:{view:CalendarView;onView:(view:CalendarView)=>void;plannerOpen:boolean;onPlannerOpen:()=>void;onPlannerClose:()=>void;onChanged:()=>void}) {
+export default function PremiumCalendarPage({view,onView,plannerOpen,onPlannerOpen,onPlannerClose,onChanged,canUseAI=true}:{view:CalendarView;onView:(view:CalendarView)=>void;plannerOpen:boolean;onPlannerOpen:()=>void;onPlannerClose:()=>void;onChanged:()=>void;canUseAI?:boolean}) {
   const [events,setEvents]=useState<EventItem[]|null>(null);const [error,setError]=useState('');const [modal,setModal]=useState(false);const [details,setDetails]=useState<EventItem|null>(null);const [eventToEdit,setEventToEdit]=useState<EventItem|undefined>();const [createStart,setCreateStart]=useState<Date|undefined>();const [energy,setEnergy]=useState<EnergyForecast|null>(null);const mainRef=useRef<HTMLElement>(null)
   const [anchor,setAnchor]=useState(()=>{const saved=localStorage.getItem('axel_calendar_date');const parsed=saved?new Date(`${saved}T12:00`):new Date();return Number.isNaN(+parsed)?new Date():parsed})
   const range=useMemo(()=>viewRange(view,anchor),[view,anchor]);const weekStart=useMemo(()=>startOfWeek(anchor),[anchor])
   const persistAnchor=(next:Date)=>{setAnchor(next);localStorage.setItem('axel_calendar_date',dayKey(next))}
   const load=()=>api<EventItem[]>(`/events?start=${encodeURIComponent(localDateTime(range.start))}&end=${encodeURIComponent(localDateTime(range.end))}`).then(items=>{setEvents(items);setError('')}).catch(err=>setError(err instanceof Error?err.message:'Не удалось загрузить календарь'))
   useEffect(()=>{setEvents(null);void load()},[view,anchor])
-  useEffect(()=>{void api<EnergyForecast>(`/energy?date=${dayKey(anchor)}`).then(setEnergy).catch(()=>setEnergy(null))},[anchor])
+  useEffect(()=>{if(!canUseAI){setEnergy(null);return}void api<EnergyForecast>(`/energy?date=${dayKey(anchor)}`).then(setEnergy).catch(()=>setEnergy(null))},[anchor,canUseAI])
   useEffect(()=>{const open=()=>{const start=new Date(anchor);start.setHours(Math.min(22,new Date().getHours()+1),0,0,0);setEventToEdit(undefined);setCreateStart(start);setModal(true)};window.addEventListener('axel:add-event',open);return()=>window.removeEventListener('axel:add-event',open)},[anchor])
   useEffect(()=>{if(!events)return;const now=new Date();const target=view==='month'?0:dayKey(anchor)===dayKey(now)?Math.max(0,(now.getHours()-7)*64):96;requestAnimationFrame(()=>{if(mainRef.current)mainRef.current.scrollTop=target})},[events,view,anchor])
   const navigate=(offset:number)=>{const next=new Date(anchor);if(view==='day')next.setDate(next.getDate()+offset);else if(view==='week')next.setDate(next.getDate()+offset*7);else next.setMonth(next.getMonth()+offset);persistAnchor(next)}
@@ -71,12 +71,13 @@ export default function PremiumCalendarPage({view,onView,plannerOpen,onPlannerOp
   const createAt=(date:Date,hour:number)=>{const start=new Date(date);start.setHours(hour,0,0,0);setEventToEdit(undefined);setCreateStart(start);setModal(true)}
   const edit=async(event:EventItem)=>{setDetails(null);setCreateStart(undefined);try{setEventToEdit(await api<EventItem>(`/events/${event.series_id||event.id}`));setModal(true)}catch(err){setError(err instanceof Error?err.message:'Не удалось загрузить серию')}}
   const title=view==='day'?anchor.toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long',year:'numeric'}):view==='month'?anchor.toLocaleDateString('ru-RU',{month:'long',year:'numeric'}):`${weekStart.toLocaleDateString('ru-RU',{day:'numeric',month:'short'})} — ${new Date(+weekStart+6*86400000).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'numeric'})}`
-  return <div className="calendar-workspace">
+  const plannerVisible=canUseAI&&plannerOpen
+  return <div className={`calendar-workspace ${plannerVisible?'planner-open':'planner-collapsed'}`}>
     <CalendarSidebar events={events||[]} selectedDate={anchor} onSelect={day=>{persistAnchor(day);onView('day')}}/>
-    <main className="calendar-main" ref={mainRef}><div className="calendar-toolbar"><div><button onClick={()=>navigate(-1)} aria-label="Предыдущий период"><ChevronLeft/></button><button className="today-button" onClick={()=>persistAnchor(new Date())}>Сегодня</button><button onClick={()=>navigate(1)} aria-label="Следующий период"><ChevronRight/></button><h1>{title}</h1></div><p>{view==='day'?'День':view==='week'?'Неделя':'Месяц'} · {events?.length||0} событий <b>· AI-анализ активен</b></p><button className="calendar-ai-trigger" onClick={onPlannerOpen}>AI-план</button><button className="calendar-add-inline" onClick={()=>{setEventToEdit(undefined);setCreateStart(undefined);setModal(true)}}><Plus/> Событие</button></div>
+    <main className="calendar-main" ref={mainRef}><div className="calendar-toolbar"><div><button onClick={()=>navigate(-1)} aria-label="Предыдущий период"><ChevronLeft/></button><button className="today-button" onClick={()=>persistAnchor(new Date())}>Сегодня</button><button onClick={()=>navigate(1)} aria-label="Следующий период"><ChevronRight/></button><h1>{title}</h1></div><p>{view==='day'?'День':view==='week'?'Неделя':'Месяц'} · {events?.length||0} событий <b>· {canUseAI?'AI-анализ активен':'AI-анализ — в PRO'}</b></p><button className="calendar-ai-trigger" onClick={onPlannerOpen}><Sparkles/>{canUseAI?'AI-план':'AI-план · PRO'}</button><button className="calendar-add-inline" onClick={()=>{setEventToEdit(undefined);setCreateStart(undefined);setModal(true)}}><Plus/> Событие</button></div>
       {!events&&!error?<Loading/>:error?<div className="error-state compact"><AlertTriangle/><h3>Не удалось загрузить календарь</h3><p>{error}</p><button onClick={()=>void load()}>Повторить</button></div>:view==='day'?<DayCalendar date={anchor} events={events||[]} energy={energy} onOpen={setDetails} onDelete={id=>void remove(id)} onCreate={createAt}/>:view==='week'?<CalendarGrid events={events||[]} weekStart={weekStart} onOpen={setDetails} onDelete={id=>void remove(id)} onCreate={createAt}/>:<MonthCalendar anchor={anchor} events={events||[]} onDay={day=>{persistAnchor(day);onView('day')}} onOpen={setDetails}/>} 
     </main>
-    <AIPlannerPanel events={events||[]} selectedDate={dayKey(anchor)} open={plannerOpen} onClose={onPlannerClose} onCalendarChanged={()=>{void load();onChanged()}}/>
+    {plannerVisible&&<AIPlannerPanel events={events||[]} selectedDate={dayKey(anchor)} open onClose={onPlannerClose} onCalendarChanged={()=>{void load();onChanged()}}/>}
     {modal&&<QuickEventModal initialStart={createStart} eventToEdit={eventToEdit} onClose={()=>setModal(false)} onSaved={()=>{setModal(false);setEventToEdit(undefined);void load();onChanged()}}/>}{details&&<EventDetailsModal event={details} onClose={()=>setDetails(null)} onEdit={event=>void edit(event)} onDelete={id=>void remove(id)}/>}
   </div>
 }

@@ -10,6 +10,7 @@ Axel One — full-stack приложение для управления кал�
 - Auth: Argon2, короткоживущий JWT access token, ротируемые и отзываемые refresh-сессии.
 - AI: локальная Ollama или облачный GigaChat с обязательным явным согласием на передачу контекста.
 - Production ingress: Caddy с автоматическим TLS и перенаправлением HTTP → HTTPS.
+- Billing: серверный каталог FREE/PRO/EXECUTIVE, официальный `yookassa==3.11.0`, проверяемые webhook и собственный worker автопродления.
 
 ## Локальная разработка
 
@@ -162,6 +163,49 @@ NOTIFICATION_BATCH_SIZE=20
 
 При `LLM_PROVIDER=gigachat` сервер требует актуальное согласие версии `PRIVACY_POLICY_VERSION`. До согласия и после его отзыва запросы, передающие персональный контекст, возвращают `403`. В интерфейсе чекбокс согласия не установлен заранее.
 
+## Подписки и ЮKassa
+
+Backend — единственный источник тарифов, цен и entitlement-кодов. Frontend передаёт в checkout только `plan_code` и `billing_interval`; произвольная сумма запрещена схемой запроса. Денежные значения хранятся как `NUMERIC(12,2)`/`Decimal` и отправляются в ЮKassa строкой с двумя знаками.
+
+Тарифы:
+
+- FREE — `0.00 RUB`, календарь, задачи, обычные цели, привычки и базовая аналитика;
+- PRO — `399.00 RUB` в месяц или `3974.04 RUB` в год (скидка 17%);
+- EXECUTIVE — `990.00 RUB` в месяц или `9860.40 RUB` в год (скидка 17%).
+
+FREE создаётся при регистрации и миграцией назначается существующим пользователям. Backend возвращает `403` с машинным кодом `subscription_required` и `required_plan` для платных функций. AI-чат, AI-планы целей, прогноз дня, анализ нагрузки и персональные рекомендации требуют PRO. Executive entitlement-коды созданы, однако отдельные модули глубокого анализа времени, коммуникаций, эффективности, Life Report, расширенных AI-инсайтов и модели поведения пока не реализованы; фиктивные данные для них не генерируются. Продажу Executive можно отключить через `EXECUTIVE_PLAN_ENABLED=false`.
+
+Основные настройки development/test-магазина:
+
+```dotenv
+YOOKASSA_ENABLED=true
+YOOKASSA_SHOP_ID=<shopId тестового магазина>
+YOOKASSA_SECRET_KEY=<секретный ключ тестового магазина>
+YOOKASSA_RETURN_URL=https://dev.example.com/billing/return
+YOOKASSA_CURRENCY=RUB
+YOOKASSA_CAPTURE=true
+YOOKASSA_WEBHOOK_IP_CHECK_ENABLED=true
+YOOKASSA_REQUEST_TIMEOUT_SECONDS=30
+YOOKASSA_RECEIPT_MODE=disabled
+SUBSCRIPTION_GRACE_PERIOD_DAYS=3
+SUBSCRIPTION_RETRY_DELAYS_HOURS=24,72
+EXECUTIVE_PLAN_ENABLED=true
+```
+
+Режимы чеков: `54fz`, `external`, `disabled`, а также legacy-значение `self_employed`. Согласно [истории изменений ЮKassa](https://yookassa.ru/developers/using-api/changelog), сервис чеков ЮKassa для самозанятых прекращён 29 декабря 2025 года, поэтому `self_employed` намеренно блокируется startup-валидацией. Для самозанятого владельца нужно согласовать актуальную внешнюю отправку чеков (`external`) либо другую законную схему. Axel One не выбирает НДС автоматически. В режиме `54fz` обязательны подтверждённые `YOOKASSA_VAT_CODE` и `YOOKASSA_TAX_SYSTEM_CODE`; `receipt` создаётся только в этом режиме.
+
+Webhook для Basic Auth настраивается в личном кабинете ЮKassa на адрес:
+
+```text
+https://example.com/api/v1/billing/yookassa/webhook
+```
+
+Подпишите события `payment.succeeded`, `payment.canceled`, `payment.waiting_for_capture`, `refund.succeeded`. URL должен работать по HTTPS на порту 443/8443. Сервер учитывает trusted proxies, проверяет официальные сети ЮKassa, затем всегда получает актуальный платёж через API и сверяет ID, статус, сумму, валюту и metadata. Return URL не активирует тариф — экран только опрашивает внутренний user-scoped payment endpoint.
+
+Автопродление ведёт Axel One: worker использует сохранённый `payment_method_id`, уникальный платёж периода и стабильный Idempotence-Key. При ошибке подписка переходит в `past_due`, создаётся notification-outbox запись, действуют повторы и grace period; после исчерпания попыток — FREE. Отмена выключает только следующее списание, а смена платного тарифа применяется в следующем периоде без proration.
+
+Подробная настройка магазина, тестирование, ротация ключа и ручная сверка описаны в [DEPLOYMENT.md](DEPLOYMENT.md#18-настроить-юkassa-и-проверить-платежи).
+
 ## Production: домен и HTTPS
 
 Полный пошаговый runbook для покупки домена, VPS, DNS, SMTP, production `.env`,
@@ -204,6 +248,7 @@ GIGACHAT_AUTHORIZATION_KEY=<секрет>
 ```
 
 Startup-валидация блокирует production с дефолтным/коротким `SECRET_KEY`, SQLite, стандартным паролем PostgreSQL, localhost/wildcard CORS, demo seed, console email, отключённым notification worker или небезопасными refresh cookies.
+При `YOOKASSA_ENABLED=true` она также требует непустые production shopId/secret key, HTTPS return URL, одностадийный capture и согласованный режим чеков; ключи с префиксом `test_` в production отвергаются.
 
 ### 3. Запуск
 
@@ -262,3 +307,6 @@ npm run build
 | Goals/habits | `/goals`, `/habits` |
 | Analytics | `/dashboard`, `/analytics`, `/energy`, `/balance`, `/overload` |
 | AI | `/ai/status`, `/ai/chat`, `/ai/conversations` |
+| Billing | `GET /billing/plans`, `GET /billing/subscription`, `POST /billing/checkout`, `GET /billing/payments/{id}` |
+| Subscription actions | `POST /billing/cancel`, `/resume`, `/change-plan` |
+| YooKassa webhook | `POST /billing/yookassa/webhook` (public, verified) |

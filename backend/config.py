@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -59,6 +60,24 @@ class Settings(BaseSettings):
     notification_max_attempts: int = 5
     notification_claim_timeout_seconds: int = 300
     notification_batch_size: int = 20
+    yookassa_enabled: bool = False
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
+    yookassa_return_url: str = "https://example.com/billing/return"
+    yookassa_currency: str = "RUB"
+    yookassa_capture: bool = True
+    yookassa_webhook_ip_check_enabled: bool = True
+    yookassa_request_timeout_seconds: int = 30
+    yookassa_receipt_mode: str = "disabled"
+    yookassa_vat_code: str = ""
+    yookassa_tax_system_code: str = ""
+    yookassa_payment_subject: str = "service"
+    yookassa_payment_mode: str = "full_payment"
+    subscription_grace_period_days: int = 3
+    subscription_retry_delays_hours: str = "24,72"
+    subscription_worker_poll_interval_seconds: int = 300
+    subscription_worker_batch_size: int = 20
+    executive_plan_enabled: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -78,10 +97,63 @@ class Settings(BaseSettings):
     def public_base_url(self) -> str:
         return f"https://{self.domain}" if self.domain else "http://localhost:5173"
 
-    def validate_runtime(self) -> None:
-        if not self.is_production:
+    @property
+    def subscription_retry_delay_list(self) -> list[int]:
+        try:
+            values = [int(item.strip()) for item in self.subscription_retry_delays_hours.split(",") if item.strip()]
+        except ValueError as exc:
+            raise RuntimeError("SUBSCRIPTION_RETRY_DELAYS_HOURS must be comma-separated positive integers") from exc
+        if not values or any(value <= 0 for value in values) or values != sorted(set(values)):
+            raise RuntimeError("SUBSCRIPTION_RETRY_DELAYS_HOURS must contain increasing unique positive integers")
+        return values
+
+    def _validate_billing(self, errors: list[str]) -> None:
+        receipt_modes = {"self_employed", "54fz", "external", "disabled"}
+        if self.yookassa_receipt_mode not in receipt_modes:
+            errors.append("YOOKASSA_RECEIPT_MODE must be self_employed, 54fz, external or disabled")
+        if self.yookassa_currency != "RUB":
+            errors.append("YOOKASSA_CURRENCY must be RUB for the configured tariff catalog")
+        if not self.yookassa_capture:
+            errors.append("YOOKASSA_CAPTURE must be true because Axel One uses one-stage payments")
+        if self.yookassa_request_timeout_seconds < 1:
+            errors.append("YOOKASSA_REQUEST_TIMEOUT_SECONDS must be positive")
+        if self.subscription_grace_period_days < 0:
+            errors.append("SUBSCRIPTION_GRACE_PERIOD_DAYS cannot be negative")
+        if self.subscription_worker_poll_interval_seconds < 1 or self.subscription_worker_batch_size < 1:
+            errors.append("subscription worker interval and batch size must be positive")
+        try:
+            self.subscription_retry_delay_list
+        except RuntimeError as exc:
+            errors.append(str(exc))
+        if self.yookassa_receipt_mode == "54fz":
+            if not self.yookassa_vat_code.isdigit() or not self.yookassa_tax_system_code.isdigit():
+                errors.append("54fz receipt mode requires YOOKASSA_VAT_CODE and YOOKASSA_TAX_SYSTEM_CODE")
+        if self.yookassa_receipt_mode == "self_employed":
+            errors.append(
+                "YOOKASSA_RECEIPT_MODE=self_employed is unavailable: YooKassa discontinued its "
+                "self-employed receipt service on 2025-12-29; configure external, 54fz or disabled"
+            )
+        if not self.yookassa_enabled:
             return
+        if not self.yookassa_shop_id or not self.yookassa_secret_key:
+            errors.append("YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY are required when YOOKASSA_ENABLED=true")
+        parsed_return = urlparse(self.yookassa_return_url)
+        if self.is_production and parsed_return.scheme != "https":
+            errors.append("YOOKASSA_RETURN_URL must use HTTPS in production")
+        if self.is_production:
+            lowered = self.yookassa_secret_key.lower()
+            if lowered.startswith("test_") or "replace" in lowered or "changeme" in lowered:
+                errors.append("production requires a non-test YOOKASSA_SECRET_KEY")
+            if self.yookassa_shop_id.lower() in {"test", "example", "changeme"}:
+                errors.append("production requires a real YOOKASSA_SHOP_ID")
+
+    def validate_runtime(self) -> None:
         errors: list[str] = []
+        self._validate_billing(errors)
+        if not self.is_production:
+            if errors:
+                raise RuntimeError("Invalid billing configuration:\n- " + "\n- ".join(errors))
+            return
         weak_secrets = {
             "change-me-in-production",
             "local-development-key-change-in-production",

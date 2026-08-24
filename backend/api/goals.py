@@ -1,8 +1,9 @@
 import asyncio
 import logging
+from typing import Annotated
 from weakref import WeakValueDictionary
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
@@ -24,10 +25,12 @@ from backend.schemas.goals import DecomposeRequest, GoalCreate, GoalResponse, Go
 from backend.services.time import today_for
 from backend.services.privacy import has_current_ai_consent, require_ai_context_consent
 from backend.config import settings
+from backend.billing.entitlements import has_entitlement, require_entitlement
 
 router = APIRouter(prefix="/goals", tags=["Goals"])
 logger = logging.getLogger(__name__)
 _goal_generation_locks: WeakValueDictionary[tuple[int, int], asyncio.Lock] = WeakValueDictionary()
+SmartGoalUser = Annotated[User, Depends(require_entitlement("smart_goal_planning"))]
 
 
 def _goal_generation_lock(user_id: int, goal_id: int) -> asyncio.Lock:
@@ -54,6 +57,8 @@ async def _generate_plan_in_background(goal_id: int, user_id: int) -> None:
             user = db.scalar(select(User).where(User.id == user_id))
             if goal is None or user is None:
                 return
+            if not has_entitlement(user, "smart_goal_planning", db):
+                return
             if settings.llm_provider.lower() == "gigachat" and not has_current_ai_consent(user):
                 return
             planner = GoalPlannerService(get_llm_client())
@@ -72,7 +77,9 @@ def create_goal(payload: GoalCreate, background_tasks: BackgroundTasks, user: Cu
     goal = Goal(user_id=user.id, **payload.model_dump())
     db.add(goal)
     db.commit()
-    if settings.llm_provider.lower() != "gigachat" or has_current_ai_consent(user):
+    if has_entitlement(user, "smart_goal_planning", db) and (
+        settings.llm_provider.lower() != "gigachat" or has_current_ai_consent(user)
+    ):
         background_tasks.add_task(_generate_plan_in_background, goal.id, user.id)
     return owned_goal(db, user.id, goal.id)
 
@@ -93,7 +100,7 @@ def update_goal(goal_id: int, payload: GoalUpdate, user: CurrentUser, db: DbSess
 
 
 @router.post("/{goal_id}/decompose", response_model=list[GoalStepResponse])
-def ai_decompose(goal_id: int, payload: DecomposeRequest, user: CurrentUser, db: DbSession):
+def ai_decompose(goal_id: int, payload: DecomposeRequest, user: SmartGoalUser, db: DbSession):
     goal = owned_goal(db, user.id, goal_id)
     db.execute(delete(GoalStep).where(GoalStep.goal_id == goal.id))
     steps = [
@@ -135,12 +142,12 @@ async def _generate_plan(
 
 
 @router.post("/{goal_id}/generate-plan", response_model=GoalPlanResponse)
-async def generate_plan(goal_id: int, payload: GoalPlanRequest, user: CurrentUser, db: DbSession):
+async def generate_plan(goal_id: int, payload: GoalPlanRequest, user: SmartGoalUser, db: DbSession):
     return await _generate_plan(goal_id, payload, user, db, regenerate=False)
 
 
 @router.post("/{goal_id}/regenerate-plan", response_model=GoalPlanResponse)
-async def regenerate_plan(goal_id: int, payload: GoalPlanRequest, user: CurrentUser, db: DbSession):
+async def regenerate_plan(goal_id: int, payload: GoalPlanRequest, user: SmartGoalUser, db: DbSession):
     return await _generate_plan(goal_id, payload, user, db, regenerate=True)
 
 
@@ -166,7 +173,7 @@ def update_plan(goal_id: int, payload: GoalPlanUpdate, user: CurrentUser, db: Db
 
 
 @router.post("/{goal_id}/plan/apply", response_model=GoalPlanApplyResponse)
-def apply_plan(goal_id: int, payload: GoalPlanApplyRequest, user: CurrentUser, db: DbSession):
+def apply_plan(goal_id: int, payload: GoalPlanApplyRequest, user: SmartGoalUser, db: DbSession):
     goal = owned_goal(db, user.id, goal_id)
     planner = GoalPlannerService(get_llm_client())
     try:

@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Bell, CalendarDays, ChevronLeft, CircleDot, Diamond,
+  Activity, BarChart3, Bell, CalendarDays, ChevronLeft, CircleDot, CreditCard, Diamond,
   Goal, HeartPulse, LayoutDashboard, LogOut, Menu, ReceiptText, Sparkles, Target, X, Zap,
 } from 'lucide-react'
 import type { Page } from '../App'
@@ -56,6 +56,7 @@ const analytics:NavEntry[] = [
 ]
 const system:NavEntry[] = [
   {id:'tasks',label:'Решения',icon:CircleDot},
+  {id:'billing',label:'Подписка',icon:CreditCard},
   {id:'settings',label:'Профиль',icon:ChevronLeft},
 ]
 

@@ -20,6 +20,7 @@ from backend.models.entities import (
     UserSettings,
     utcnow,
 )
+from backend.billing.models import BillingPayment, BillingWebhookEvent, UserSubscription
 
 __all__ = [
     "User",
@@ -41,5 +42,8 @@ __all__ = [
     "AIActionProposal",
     "OneTimeToken",
     "NotificationDelivery",
+    "UserSubscription",
+    "BillingPayment",
+    "BillingWebhookEvent",
     "utcnow",
 ]

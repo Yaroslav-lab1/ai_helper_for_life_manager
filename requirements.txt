@@ -13,3 +13,4 @@ python-multipart==0.0.32
 pytest==9.1.1
 httpx==0.28.1
 httpx2==2.10.0
+yookassa==3.11.0
