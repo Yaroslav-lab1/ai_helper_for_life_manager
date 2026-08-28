@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 import hashlib
 import hmac
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -27,6 +28,9 @@ ALLOWED_WEBHOOK_EVENTS = {
     "refund.succeeded",
 }
 TERMINAL_SUCCESS_STATUSES = {"succeeded", "refunded"}
+OPEN_PAYMENT_STATUSES = {"created", "pending", "waiting_for_capture", "processing", "retry"}
+
+logger = logging.getLogger(__name__)
 
 
 class WebhookVerificationError(ValueError):
@@ -35,6 +39,18 @@ class WebhookVerificationError(ValueError):
 
 def _billing_error(code: str, message: str, http_status: int = 409) -> HTTPException:
     return HTTPException(status_code=http_status, detail={"code": code, "message": message})
+
+
+def _provider_checkout_message(exc: BillingProviderError) -> str:
+    if exc.code.startswith("UnauthorizedError"):
+        return "ЮKassa отклонила shopId или секретный ключ. Проверьте реквизиты магазина."
+    if exc.code.startswith("ForbiddenError"):
+        return "ЮKassa приняла ключ, но магазину недоступно создание платежей."
+    if exc.code.startswith("BadRequestError"):
+        if exc.code.endswith(":receipt") or ":receipt." in exc.code:
+            return "ЮKassa требует корректные данные чека. Проверьте настройку фискализации магазина."
+        return "ЮKassa отклонила параметры платежа. Проверьте настройки магазина и чеков."
+    return "ЮKassa временно не ответила. Повторите попытку."
 
 
 def ensure_billing_available() -> None:
@@ -135,9 +151,10 @@ def _provider_payload(payment: BillingPayment, user: User, *, recurring: bool) -
         payload.update(
             {
                 "confirmation": {"type": "redirect", "return_url": settings.yookassa_return_url},
-                "save_payment_method": True,
             }
         )
+        if settings.yookassa_recurring_payments_enabled:
+            payload["save_payment_method"] = True
     receipt = _receipt(user, payment)
     if receipt is not None:
         payload["receipt"] = receipt
@@ -186,6 +203,12 @@ def serialize_subscription(subscription: UserSubscription) -> dict:
         "scheduled_change_at": subscription.current_period_end
         if subscription.scheduled_plan_code
         else None,
+        "can_resume": bool(
+            settings.yookassa_recurring_payments_enabled
+            and subscription.yookassa_payment_method_id
+            and subscription.current_period_end
+            and subscription.current_period_end > utc_now()
+        ),
         "retry_count": subscription.retry_count,
         "next_retry_at": subscription.next_retry_at,
     }
@@ -278,9 +301,18 @@ def checkout(
         _verify_provider_payment(payment, provider)
     except BillingProviderError as exc:
         payment.failure_code = exc.code[:80]
+        # Provider 4xx responses are definitive: no payment was created. Closing
+        # the internal attempt lets the user correct configuration or choose a
+        # different plan. Transport failures remain open so the same stable
+        # idempotence key can safely be retried.
+        if not exc.retryable:
+            payment.status = "canceled"
+            payment.canceled_at = now
+            if payment.subscription and payment.subscription.plan_code == "free":
+                payment.subscription.status = "free"
         db.commit()
         raise _billing_error(
-            "provider_unavailable", "ЮKassa временно не ответила. Повторите попытку.", 502
+            "provider_unavailable", _provider_checkout_message(exc), 502
         ) from exc
     except WebhookVerificationError as exc:
         payment.failure_code = "provider_response_mismatch"
@@ -333,17 +365,30 @@ def _apply_succeeded(db: Session, payment: BillingPayment, provider: ProviderPay
     payment.period_end = end
     payment.failure_code = None
     payment.confirmation_url = None
-    if provider.payment_method_saved and provider.payment_method_id:
+    if (
+        settings.yookassa_recurring_payments_enabled
+        and provider.payment_method_saved
+        and provider.payment_method_id
+    ):
         payment.payment_method_saved = True
         subscription.yookassa_payment_method_id = provider.payment_method_id[:64]
     subscription.plan_code = payment.plan_code
     subscription.billing_interval = payment.billing_interval
-    subscription.status = "active"
     subscription.current_period_start = start
     subscription.current_period_end = end
-    subscription.cancel_at_period_end = False
-    subscription.scheduled_plan_code = None
-    subscription.scheduled_billing_interval = None
+    if payment.kind == "initial" and not subscription.yookassa_payment_method_id:
+        # The shop may accept ordinary payments before YooKassa grants recurring
+        # payment permission. Sell exactly one period and never imply that the
+        # card will be charged again.
+        subscription.status = "cancel_scheduled"
+        subscription.cancel_at_period_end = True
+        subscription.scheduled_plan_code = "free"
+        subscription.scheduled_billing_interval = None
+    else:
+        subscription.status = "active"
+        subscription.cancel_at_period_end = False
+        subscription.scheduled_plan_code = None
+        subscription.scheduled_billing_interval = None
     subscription.retry_count = 0
     subscription.next_retry_at = None
     return True
@@ -514,6 +559,12 @@ def change_plan(
         raise _billing_error(
             "checkout_required", "Переход с FREE начинается с нового безопасного платежа.", 409
         )
+    if not settings.yookassa_recurring_payments_enabled or not subscription.yookassa_payment_method_id:
+        raise _billing_error(
+            "checkout_after_period_end",
+            "Новый период можно будет оплатить после окончания текущего. Карта не сохранена.",
+            409,
+        )
     if subscription.plan_code == target.code and subscription.billing_interval == billing_interval:
         raise _billing_error("already_selected", "Этот тариф и интервал уже действуют.")
     subscription.scheduled_plan_code = target.code
@@ -532,6 +583,61 @@ def get_owned_payment(db: Session, user_id: int, payment_id: int) -> BillingPaym
     )
     if payment is None:
         raise HTTPException(status_code=404, detail="Платёж не найден.")
+    return payment
+
+
+def refresh_owned_payment(
+    db: Session,
+    user_id: int,
+    payment_id: int,
+    client: BillingClient,
+) -> BillingPayment:
+    """Reconcile a user-owned payment with YooKassa using a server-to-server GET.
+
+    Webhooks remain the primary asynchronous path. This authenticated fallback
+    makes the return page resilient to delayed or temporarily missed delivery
+    without trusting browser parameters or the notification body.
+    """
+    payment = db.scalar(
+        select(BillingPayment)
+        .where(BillingPayment.id == payment_id, BillingPayment.user_id == user_id)
+        .with_for_update()
+    )
+    if payment is None:
+        raise HTTPException(status_code=404, detail="Платёж не найден.")
+    if payment.status not in OPEN_PAYMENT_STATUSES or not payment.provider_payment_id:
+        return payment
+    try:
+        provider = client.get_payment(payment.provider_payment_id)
+        _verify_provider_payment(payment, provider)
+    except BillingProviderError:
+        # A status read must stay available while YooKassa is temporarily down;
+        # the next browser poll or webhook will retry the authoritative lookup.
+        return payment
+    except WebhookVerificationError as exc:
+        logger.warning(
+            "YooKassa payment reconciliation mismatch (payment_id=%s, reason=%s)",
+            payment.id,
+            str(exc),
+        )
+        payment.failure_code = "provider_response_mismatch"
+        db.commit()
+        return payment
+
+    now = utc_now()
+    changed = False
+    if provider.status == "succeeded" and provider.paid:
+        changed = _apply_succeeded(db, payment, provider, now)
+        if provider.refunded_amount >= payment.amount:
+            changed = _apply_refund(payment, provider) or changed
+    elif provider.status == "canceled":
+        changed = _apply_canceled(payment, provider, now)
+    elif provider.status == "waiting_for_capture" and payment.status not in TERMINAL_SUCCESS_STATUSES:
+        changed = payment.status != "waiting_for_capture"
+        payment.status = "waiting_for_capture"
+    if changed:
+        db.commit()
+        db.refresh(payment)
     return payment
 
 

@@ -54,6 +54,7 @@ class SubscriptionResponse(BaseModel):
     scheduled_plan_code: str | None
     scheduled_billing_interval: str | None
     scheduled_change_at: datetime | None
+    can_resume: bool
     retry_count: int
     next_retry_at: datetime | None
 

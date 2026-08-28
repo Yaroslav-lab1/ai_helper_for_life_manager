@@ -44,13 +44,13 @@ export type BillingPlan = {
   features:string[];entitlements:string[]
 }
 export type BillingCatalog = {
-  plans:BillingPlan[];checkout_available:boolean;checkout_unavailable_message:string|null
+  plans:BillingPlan[];checkout_available:boolean;checkout_unavailable_message:string|null;recurring_payments_available:boolean
 }
 export type Subscription = {
   plan_code:PlanCode;billing_interval?:BillingInterval;status:string;effective_plan_code:PlanCode
   entitlements:string[];current_period_start?:string;current_period_end?:string;cancel_at_period_end:boolean
   next_billing_at?:string;access_until?:string;scheduled_plan_code?:PlanCode;scheduled_billing_interval?:BillingInterval
-  scheduled_change_at?:string;retry_count:number;next_retry_at?:string
+  scheduled_change_at?:string;can_resume?:boolean;retry_count:number;next_retry_at?:string
 }
 export type BillingPayment = {
   id:number;kind:string;plan_code:PlanCode;plan_name:string;billing_interval:BillingInterval

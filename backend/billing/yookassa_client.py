@@ -18,6 +18,32 @@ class BillingProviderError(RuntimeError):
         self.retryable = retryable
 
 
+def _provider_error_details(exc: Exception) -> tuple[str, str | None, str | None]:
+    """Return a safe diagnostic code without logging provider descriptions or credentials."""
+    error = getattr(exc, "error", None)
+    provider_code = getattr(error, "code", None)
+    parameter = getattr(error, "parameter", None)
+    parts = [type(exc).__name__]
+    if provider_code:
+        parts.append(str(provider_code))
+    if parameter:
+        parts.append(str(parameter))
+    return ":".join(parts)[:80], str(provider_code) if provider_code else None, str(parameter) if parameter else None
+
+
+def _provider_error_is_retryable(exc: Exception) -> bool:
+    return type(exc).__name__ in {
+        "ConnectionError",
+        "ReadTimeout",
+        "ConnectTimeout",
+        "Timeout",
+        "HTTPError",
+        "TooManyRequestsError",
+        "ResponseProcessingError",
+        "InternalServerError",
+    }
+
+
 @dataclass(frozen=True)
 class ProviderPayment:
     id: str
@@ -142,15 +168,14 @@ class YooKassaClient:
             payment_api = YooKassaClient._payment_api()
             return _normalize(payment_api.create(payload, idempotence_key))
         except Exception as exc:
-            logger.warning("YooKassa create payment failed (%s)", type(exc).__name__)
-            retryable = type(exc).__name__ in {
-                "ConnectionError",
-                "ReadTimeout",
-                "ConnectTimeout",
-                "Timeout",
-                "HTTPError",
-            }
-            raise BillingProviderError(type(exc).__name__[:80], retryable=retryable) from exc
+            code, provider_code, parameter = _provider_error_details(exc)
+            logger.warning(
+                "YooKassa create payment failed (class=%s, code=%s, parameter=%s)",
+                type(exc).__name__,
+                provider_code or "unknown",
+                parameter or "unknown",
+            )
+            raise BillingProviderError(code, retryable=_provider_error_is_retryable(exc)) from exc
 
     def create_initial_payment(self, payload: dict[str, Any], idempotence_key: str) -> ProviderPayment:
         return self._create(payload, idempotence_key)
@@ -163,8 +188,14 @@ class YooKassaClient:
             payment_api = self._payment_api()
             return _normalize(payment_api.find_one(payment_id))
         except Exception as exc:
-            logger.warning("YooKassa payment lookup failed (%s)", type(exc).__name__)
-            raise BillingProviderError(type(exc).__name__[:80], retryable=True) from exc
+            code, provider_code, parameter = _provider_error_details(exc)
+            logger.warning(
+                "YooKassa payment lookup failed (class=%s, code=%s, parameter=%s)",
+                type(exc).__name__,
+                provider_code or "unknown",
+                parameter or "unknown",
+            )
+            raise BillingProviderError(code, retryable=_provider_error_is_retryable(exc)) from exc
 
 
 class FakeYooKassaClient:

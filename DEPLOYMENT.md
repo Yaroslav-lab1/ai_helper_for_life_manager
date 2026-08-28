@@ -239,6 +239,7 @@ YOOKASSA_SECRET_KEY=
 YOOKASSA_RETURN_URL=https://app.example.com/billing/return
 YOOKASSA_CURRENCY=RUB
 YOOKASSA_CAPTURE=true
+YOOKASSA_RECURRING_PAYMENTS_ENABLED=false
 YOOKASSA_WEBHOOK_IP_CHECK_ENABLED=true
 YOOKASSA_REQUEST_TIMEOUT_SECONDS=30
 YOOKASSA_RECEIPT_MODE=disabled
@@ -493,14 +494,14 @@ https://app.example.com/api/v1/billing/yookassa/webhook
 2. Войдите новым пользователем: в разделе «Подписка» должен быть FREE.
 3. Выберите PRO monthly. Проверьте в DevTools, что browser отправляет только `plan_code` и `billing_interval`, а ответ содержит внутренний `payment_id` и HTTPS `confirmation_url`.
 4. Завершите оплату тестовыми данными из кабинета ЮKassa.
-5. На `/billing/return` сначала допустим статус pending. Тариф должен включиться только после проверенного `payment.succeeded`.
+5. На `/billing/return` сначала допустим статус pending. Тариф должен включиться после серверной проверки статуса через API ЮKassa; штатно её запускает `payment.succeeded`, а user-scoped polling служит fallback при задержке webhook.
 6. В БД проверьте одну запись `billing_payments`, одну обработанную запись `billing_webhook_events` и активную `user_subscriptions`. Не копируйте confirmation URL и provider payload в тикеты.
 7. Повторно доставьте то же уведомление из кабинета: период не должен продвинуться второй раз.
 8. Проведите отменённый тестовый платёж и убедитесь, что платный доступ не выдан.
 
 ### 18.5. Проверить автопродление и отмену
 
-Первый платеж запрашивает `save_payment_method=true`. Автопродление использует только подтверждённый сохранённый `payment_method.id`; расписанием управляет Axel One, как требует [сценарий повторных платежей](https://yookassa.ru/developers/payment-acceptance/scenario-extensions/recurring-payments/pay-with-saved).
+По умолчанию `YOOKASSA_RECURRING_PAYMENTS_ENABLED=false`: первый платёж не запрашивает сохранение карты, а доступ продаётся ровно на один период. Если отправить `save_payment_method=true` магазину без права на рекуррентные платежи, ЮKassa вернёт `403 forbidden`. Включайте флаг только после того, как менеджер ЮKassa подтвердил рекуррентные платежи для конкретного shopId. После включения автопродление использует только подтверждённый сохранённый `payment_method.id`; расписанием управляет Axel One, как требует [сценарий повторных платежей](https://yookassa.ru/developers/payment-acceptance/scenario-extensions/recurring-payments/pay-with-saved).
 
 На staging:
 
@@ -517,8 +518,9 @@ https://app.example.com/api/v1/billing/yookassa/webhook
 1. Завершите активацию настоящего магазина и согласуйте способы оплаты/автоплатежи/чеки.
 2. Выпустите production secret key в кабинете и замените тестовый ключ только в защищённом `.env`/secret store.
 3. Проверьте production shopId, HTTPS return URL и webhook URL.
-4. Выполните `docker compose ... config --quiet`, затем запустите backend. Startup остановится при пустом/тестовом ключе, HTTP return URL или несогласованной фискализации.
-5. Проведите один контролируемый платёж минимально допустимого выбранного тарифа и сверку в кабинете, приложении и банковской выписке.
+4. Оставьте `YOOKASSA_RECURRING_PAYMENTS_ENABLED=false`, пока ЮKassa явно не подключит магазину рекуррентные платежи.
+5. Выполните `docker compose ... config --quiet`, затем запустите backend. Startup остановится при пустом/тестовом ключе, HTTP return URL или несогласованной фискализации.
+6. Проведите один контролируемый платёж минимально допустимого выбранного тарифа и сверку в кабинете, приложении и банковской выписке.
 
 Production нельзя считать готовым, пока не подтверждены production shopId, события webhook, режим чеков и успешный тестовый платёж.
 
