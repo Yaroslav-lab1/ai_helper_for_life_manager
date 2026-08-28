@@ -41,6 +41,7 @@ def billing_provider():
         settings.yookassa_shop_id,
         settings.yookassa_secret_key,
         settings.yookassa_receipt_mode,
+        settings.yookassa_recurring_payments_enabled,
         settings.subscription_retry_delays_hours,
         settings.subscription_grace_period_days,
     )
@@ -48,6 +49,7 @@ def billing_provider():
     settings.yookassa_shop_id = "test-shop"
     settings.yookassa_secret_key = "test_secret"
     settings.yookassa_receipt_mode = "disabled"
+    settings.yookassa_recurring_payments_enabled = True
     settings.subscription_retry_delays_hours = "24,72"
     settings.subscription_grace_period_days = 3
     fake = FakeYooKassaClient()
@@ -58,6 +60,7 @@ def billing_provider():
         settings.yookassa_shop_id,
         settings.yookassa_secret_key,
         settings.yookassa_receipt_mode,
+        settings.yookassa_recurring_payments_enabled,
         settings.subscription_retry_delays_hours,
         settings.subscription_grace_period_days,
     ) = previous
@@ -140,6 +143,7 @@ def test_enabled_billing_is_exposed_in_catalog(client: TestClient, billing_provi
     assert catalog.status_code == 200
     assert catalog.json()["checkout_available"] is True
     assert catalog.json()["checkout_unavailable_message"] is None
+    assert catalog.json()["recurring_payments_available"] is True
 
 
 def test_checkout_rejects_client_amount_and_creates_redirect_with_saved_method(
@@ -164,6 +168,36 @@ def test_checkout_rejects_client_amount_and_creates_redirect_with_saved_method(
     assert key == f"checkout:{result['payment_id']}" and len(key) <= 64
 
 
+def test_checkout_without_recurring_permission_sells_one_period_without_saving_card(
+    client: TestClient, billing_provider: FakeYooKassaClient
+):
+    settings.yookassa_recurring_payments_enabled = False
+    headers, _ = register(client)
+    result = checkout(client, headers)
+    _, payload, _ = billing_provider.create_calls[0]
+    assert "save_payment_method" not in payload
+
+    provider_id = next(iter(billing_provider.payments))
+    billing_provider.payments[provider_id] = replace(
+        billing_provider.payments[provider_id], status="succeeded", paid=True
+    )
+    payment = client.get(f"/api/v1/billing/payments/{result['payment_id']}", headers=headers)
+    assert payment.status_code == 200 and payment.json()["status"] == "succeeded"
+    subscription = client.get("/api/v1/billing/subscription", headers=headers).json()
+    assert subscription["plan_code"] == "pro"
+    assert subscription["status"] == "cancel_scheduled"
+    assert subscription["cancel_at_period_end"] is True
+    assert subscription["can_resume"] is False
+    assert subscription["next_billing_at"] is None
+    change = client.post(
+        "/api/v1/billing/change-plan",
+        headers=headers,
+        json={"plan_code": "executive", "billing_interval": "monthly"},
+    )
+    assert change.status_code == 409
+    assert change.json()["detail"]["code"] == "checkout_after_period_end"
+
+
 def test_checkout_network_retry_reuses_internal_payment_and_idempotence_key(
     client: TestClient, billing_provider: FakeYooKassaClient
 ):
@@ -185,6 +219,32 @@ def test_checkout_network_retry_reuses_internal_payment_and_idempotence_key(
         assert db.scalar(select(func.count()).select_from(BillingPayment)) == 1
 
 
+def test_definitive_provider_error_closes_attempt_and_exposes_safe_diagnostic(
+    client: TestClient, billing_provider: FakeYooKassaClient
+):
+    headers, _ = register(client)
+    billing_provider.error = BillingProviderError(
+        "BadRequestError:invalid_request:receipt", retryable=False
+    )
+    failed = client.post(
+        "/api/v1/billing/checkout",
+        headers=headers,
+        json={"plan_code": "pro", "billing_interval": "monthly"},
+    )
+    assert failed.status_code == 502
+    assert "данные чека" in failed.json()["detail"]["message"]
+    with SessionLocal() as db:
+        first = db.scalar(select(BillingPayment))
+        assert first.status == "canceled"
+        assert first.failure_code == "BadRequestError:invalid_request:receipt"
+
+    billing_provider.error = None
+    result = checkout(client, headers, "executive", "yearly")
+    assert result["confirmation_url"] == "https://yookassa.test/confirm"
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(BillingPayment)) == 2
+
+
 def test_open_checkout_cannot_create_a_second_payment_for_another_plan(
     client: TestClient, billing_provider: FakeYooKassaClient
 ):
@@ -202,7 +262,7 @@ def test_open_checkout_cannot_create_a_second_payment_for_another_plan(
     assert len(billing_provider.create_calls) == 1
 
 
-def test_return_poll_does_not_activate_but_verified_webhook_does_once(
+def test_return_poll_reconciles_with_provider_and_webhook_remains_idempotent(
     client: TestClient, billing_provider: FakeYooKassaClient
 ):
     headers, user = register(client)
@@ -211,21 +271,40 @@ def test_return_poll_does_not_activate_but_verified_webhook_does_once(
     provider_succeeds(billing_provider, provider_id)
 
     polled = client.get(f"/api/v1/billing/payments/{result['payment_id']}", headers=headers)
-    assert polled.json()["status"] == "pending"
-    assert client.get("/api/v1/billing/subscription", headers=headers).json()["plan_code"] == "free"
+    assert polled.json()["status"] == "succeeded"
+    active = client.get("/api/v1/billing/subscription", headers=headers).json()
+    assert active["plan_code"] == "pro" and active["status"] == "active"
+    assert active["billing_interval"] == "yearly"
 
     first = notify(client, "payment.succeeded", provider_id)
     second = notify(client, "payment.succeeded", provider_id)
     assert first.status_code == second.status_code == 200
-    active = client.get("/api/v1/billing/subscription", headers=headers).json()
-    assert active["plan_code"] == "pro" and active["status"] == "active"
-    assert active["billing_interval"] == "yearly"
     with SessionLocal() as db:
         subscription = db.scalar(select(UserSubscription).where(UserSubscription.user_id == user["id"]))
         assert subscription.yookassa_payment_method_id == "pm_safe"
         assert db.scalar(select(func.count()).select_from(BillingWebhookEvent)) == 1
         payment = db.get(BillingPayment, result["payment_id"])
         assert payment.period_end.year == payment.period_start.year + 1
+
+
+def test_return_poll_refuses_provider_mismatch(
+    client: TestClient, billing_provider: FakeYooKassaClient
+):
+    headers, _ = register(client)
+    result = checkout(client, headers)
+    provider_id = next(iter(billing_provider.payments))
+    provider_succeeds(billing_provider, provider_id)
+    billing_provider.payments[provider_id] = replace(
+        billing_provider.payments[provider_id], amount=Decimal("1.00")
+    )
+
+    polled = client.get(f"/api/v1/billing/payments/{result['payment_id']}", headers=headers)
+    assert polled.status_code == 200
+    assert polled.json()["status"] == "pending"
+    assert client.get("/api/v1/billing/subscription", headers=headers).json()["plan_code"] == "free"
+    with SessionLocal() as db:
+        payment = db.get(BillingPayment, result["payment_id"])
+        assert payment.failure_code == "provider_response_mismatch"
 
 
 def test_webhook_rejects_fake_status_amount_and_metadata(

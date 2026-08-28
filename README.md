@@ -184,6 +184,7 @@ YOOKASSA_SECRET_KEY=<секретный ключ тестового магази
 YOOKASSA_RETURN_URL=https://dev.example.com/billing/return
 YOOKASSA_CURRENCY=RUB
 YOOKASSA_CAPTURE=true
+YOOKASSA_RECURRING_PAYMENTS_ENABLED=false
 YOOKASSA_WEBHOOK_IP_CHECK_ENABLED=true
 YOOKASSA_REQUEST_TIMEOUT_SECONDS=30
 YOOKASSA_RECEIPT_MODE=disabled
@@ -200,9 +201,9 @@ Webhook для Basic Auth настраивается в личном кабин�
 https://example.com/api/v1/billing/yookassa/webhook
 ```
 
-Подпишите события `payment.succeeded`, `payment.canceled`, `payment.waiting_for_capture`, `refund.succeeded`. URL должен работать по HTTPS на порту 443/8443. Сервер учитывает trusted proxies, проверяет официальные сети ЮKassa, затем всегда получает актуальный платёж через API и сверяет ID, статус, сумму, валюту и metadata. Return URL не активирует тариф — экран только опрашивает внутренний user-scoped payment endpoint.
+Подпишите события `payment.succeeded`, `payment.canceled`, `payment.waiting_for_capture`, `refund.succeeded`. URL должен работать по HTTPS на порту 443/8443. Сервер учитывает trusted proxies, проверяет официальные сети ЮKassa, затем всегда получает актуальный платёж через API и сверяет ID, статус, сумму, валюту и metadata. Return URL сам по себе не является доказательством оплаты: экран опрашивает внутренний user-scoped payment endpoint, а backend выполняет такую же авторитетную сверку платежа через API ЮKassa. Это служит безопасным fallback при задержке webhook; асинхронные уведомления всё равно должны быть настроены.
 
-Автопродление ведёт Axel One: worker использует сохранённый `payment_method_id`, уникальный платёж периода и стабильный Idempotence-Key. При ошибке подписка переходит в `past_due`, создаётся notification-outbox запись, действуют повторы и grace period; после исчерпания попыток — FREE. Отмена выключает только следующее списание, а смена платного тарифа применяется в следующем периоде без proration.
+По умолчанию Axel One продаёт один оплаченный период без сохранения карты: некоторые магазины ЮKassa не имеют права на рекуррентные платежи, и запрос с `save_payment_method=true` для них возвращает `403`. Включайте `YOOKASSA_RECURRING_PAYMENTS_ENABLED=true` только после письменного подтверждения ЮKassa для конкретного shopId. Тогда worker использует сохранённый `payment_method_id`, уникальный платёж периода и стабильный Idempotence-Key. При ошибке подписка переходит в `past_due`, создаётся notification-outbox запись, действуют повторы и grace period; после исчерпания попыток — FREE. Отмена выключает только следующее списание, а смена платного тарифа применяется в следующем периоде без proration.
 
 Подробная настройка магазина, тестирование, ротация ключа и ручная сверка описаны в [DEPLOYMENT.md](DEPLOYMENT.md#18-настроить-юkassa-и-проверить-платежи).
 

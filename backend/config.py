@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     yookassa_return_url: str = "https://example.com/billing/return"
     yookassa_currency: str = "RUB"
     yookassa_capture: bool = True
+    yookassa_recurring_payments_enabled: bool = False
     yookassa_webhook_ip_check_enabled: bool = True
     yookassa_request_timeout_seconds: int = 30
     yookassa_receipt_mode: str = "disabled"

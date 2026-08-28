@@ -24,6 +24,7 @@ from backend.billing.service import (
     ensure_billing_available,
     get_owned_payment,
     process_webhook,
+    refresh_owned_payment,
     resume_subscription,
     serialize_payment,
     serialize_subscription,
@@ -54,6 +55,7 @@ def list_plans():
         "plans": catalog_payload(),
         "checkout_available": checkout_available,
         "checkout_unavailable_message": checkout_unavailable_message,
+        "recurring_payments_available": settings.yookassa_recurring_payments_enabled,
     }
 
 
@@ -82,7 +84,15 @@ def create_checkout(payload: CheckoutRequest, user: CurrentUser, db: DbSession):
 
 @router.get("/payments/{payment_id}", response_model=PaymentResponse)
 def payment_status(payment_id: int, user: CurrentUser, db: DbSession):
-    return serialize_payment(get_owned_payment(db, user.id, payment_id))
+    payment = get_owned_payment(db, user.id, payment_id)
+    if payment.provider_payment_id and settings.yookassa_enabled:
+        try:
+            payment = refresh_owned_payment(db, user.id, payment_id, get_billing_client())
+        except BillingProviderError:
+            # Keep the user-scoped status endpoint readable during a temporary
+            # provider/configuration outage. A later poll or webhook retries.
+            pass
+    return serialize_payment(payment)
 
 
 @router.post("/cancel", response_model=BillingActionResponse)
